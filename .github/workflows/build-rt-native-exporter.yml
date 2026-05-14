@@ -38,7 +38,7 @@ jobs:
       - name: Build RTNativeExporter
         run: |
           cd cpp-mods
-          cmake --build build --config Release --target RTNativeExporter
+          cmake --build build --target RTNativeExporter --verbose
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
