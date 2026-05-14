@@ -14,7 +14,7 @@ jobs:
       - name: Clone UE4SS
         run: |
           cd cpp-mods
-          git clone https://github.com/UE4SS-RE/RE-UE4SS.git
+          git clone --recursive https://github.com/UE4SS-RE/RE-UE4SS.git
 
       - name: Configure
         run: |
