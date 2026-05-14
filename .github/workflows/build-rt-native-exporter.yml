@@ -35,10 +35,19 @@ jobs:
           cd cpp-mods
           cmake -B build -S . -G "Visual Studio 17 2022"
 
+      - name: Inspect generated Visual Studio solution
+        shell: pwsh
+        run: |
+          cd cpp-mods/build
+          Get-ChildItem -Recurse -Filter *.sln | Select-Object FullName
+          Get-ChildItem -Recurse -Filter *.vcxproj | Select-Object FullName
+          Select-String -Path *.sln -Pattern "GlobalSection\(SolutionConfigurationPlatforms\)","GlobalSection\(ProjectConfigurationPlatforms\)","Debug\|","Release\|" -Context 0,20
+
       - name: Build RTNativeExporter
+        shell: pwsh
         run: |
           cd cpp-mods
-          cmake --build build --config Release --target RTNativeExporter --verbose
+          cmake --build build --target RTNativeExporter --verbose
 
       - name: Upload DLL
         uses: actions/upload-artifact@v4
