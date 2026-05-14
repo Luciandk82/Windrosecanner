@@ -13,6 +13,7 @@ jobs:
 
       - name: Clone UE4SS
         run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
           cd cpp-mods
           git clone --recursive https://github.com/UE4SS-RE/RE-UE4SS.git
 
