@@ -11,25 +11,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Clone UE4SS recursively over HTTPS
+      - name: Clone UE4SS recursively with Epic-access token
         shell: bash
+        env:
+          EPIC_GITHUB_TOKEN: ${{ secrets.EPIC_GITHUB_TOKEN }}
         run: |
-          git config --global url."https://github.com/".insteadOf "git@github.com:"
-          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://x-access-token:${EPIC_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${EPIC_GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${EPIC_GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
           cd cpp-mods
-          git clone https://github.com/UE4SS-RE/RE-UE4SS.git
-          cd RE-UE4SS
-          sed -i 's#git@github.com:#https://github.com/#g' .gitmodules
-          sed -i 's#ssh://git@github.com/#https://github.com/#g' .gitmodules
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          git clone --recursive https://github.com/UE4SS-RE/RE-UE4SS.git
 
       - name: Configure
         run: |
           cd cpp-mods
           cmake -B build -S . -G "Visual Studio 17 2022" -A x64
 
-      - name: Build
+      - name: Build RTNativeExporter
         run: |
           cd cpp-mods
           cmake --build build --config Release --target RTNativeExporter
