@@ -2,13 +2,22 @@
 
 #include <Mod/CppUserModBase.hpp>
 #include <DynamicOutput/DynamicOutput.hpp>
+#include <Unreal/UObjectGlobals.hpp>
+#include <Unreal/UObject.hpp>
+#include <Unreal/UClass.hpp>
+#include <Unreal/FProperty.hpp>
 #include <windows.h>
+
 #include <fstream>
 #include <filesystem>
-#include <chrono>
-#include <thread>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <set>
+#include <cstdint>
 
 using namespace RC;
+using namespace RC::Unreal;
 
 static std::filesystem::path resolve_data_dir()
 {
@@ -19,27 +28,257 @@ static std::filesystem::path resolve_data_dir()
 
     for (auto& p : candidates)
     {
-        try
-        {
-            if (std::filesystem::exists(p)) return p;
-        }
-        catch (...) {}
+        try { if (std::filesystem::exists(p)) return p; } catch (...) {}
     }
 
     try { std::filesystem::create_directories("windrose_plus_data"); } catch (...) {}
     return "windrose_plus_data";
 }
 
+static std::filesystem::path out_dir()
+{
+    auto p = resolve_data_dir() / "native_rt_export";
+    try { std::filesystem::create_directories(p); } catch (...) {}
+    return p;
+}
+
 static void file_log(const std::string& s)
 {
     try
     {
-        auto out_dir = resolve_data_dir() / "native_rt_export";
-        std::filesystem::create_directories(out_dir);
-        std::ofstream f(out_dir / "rt_native_exporter.log", std::ios::app);
+        std::ofstream f(out_dir() / "rt_native_exporter.log", std::ios::app);
         f << s << "\n";
     }
     catch (...) {}
+}
+
+static std::string wide_to_utf8(std::wstring_view w)
+{
+    if (w.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return {};
+    std::string s(n, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), (int)w.size(), s.data(), n, nullptr, nullptr);
+    return s;
+}
+
+static std::string json_escape(const std::string& s)
+{
+    std::string out;
+    out.reserve(s.size() + 16);
+
+    for (char c : s)
+    {
+        switch (c)
+        {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if ((unsigned char)c < 0x20)
+                {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char)c);
+                    out += buf;
+                }
+                else out += c;
+        }
+    }
+
+    return out;
+}
+
+static std::string obj_name(UObject* o)
+{
+    if (!o) return "";
+    try { return wide_to_utf8(o->GetName()); } catch (...) { return ""; }
+}
+
+static std::string obj_path(UObject* o)
+{
+    if (!o) return "";
+    try { return wide_to_utf8(o->GetPathName()); } catch (...) { return ""; }
+}
+
+static std::string class_name(UObject* o)
+{
+    if (!o) return "";
+    try
+    {
+        auto* c = o->GetClassPrivate();
+        return c ? wide_to_utf8(c->GetName()) : "";
+    }
+    catch (...) { return ""; }
+}
+
+static bool name_contains_target(const std::string& path)
+{
+    static const std::vector<std::string> targets = {
+        "RT_LandscapeTable",
+        "RT_LandscapeHeights",
+        "RT_Biomes",
+        "RT_SubBiomes",
+        "RT_BiomeDistanceFields",
+        "RT_VoronoiTriangleList",
+        "RT_MapCapture",
+        "RT_MapFog"
+    };
+
+    for (auto& t : targets)
+    {
+        if (path.find(t) != std::string::npos) return true;
+    }
+
+    return false;
+}
+
+template <typename T>
+static bool read_prop_value(UObject* o, const wchar_t* prop_name, T& out)
+{
+    if (!o) return false;
+
+    try
+    {
+        FProperty* p = o->GetPropertyByNameInChain(prop_name);
+        if (!p) return false;
+
+        T* v = p->ContainerPtrToValuePtr<T>(o);
+        if (!v) return false;
+
+        out = *v;
+        return true;
+    }
+    catch (...) { return false; }
+}
+
+static UObject* read_object_prop(UObject* o, const wchar_t* prop_name)
+{
+    if (!o) return nullptr;
+
+    try
+    {
+        FProperty* p = o->GetPropertyByNameInChain(prop_name);
+        if (!p) return nullptr;
+
+        UObject** pp = p->ContainerPtrToValuePtr<UObject*>(o);
+        if (!pp) return nullptr;
+
+        return *pp;
+    }
+    catch (...) { return nullptr; }
+}
+
+static std::string read_prop_as_json(UObject* o, const wchar_t* prop_name)
+{
+    int32_t i32 = 0;
+    uint32_t u32 = 0;
+    bool b = false;
+
+    if (read_prop_value<int32_t>(o, prop_name, i32)) return std::to_string(i32);
+    if (read_prop_value<uint32_t>(o, prop_name, u32)) return std::to_string(u32);
+    if (read_prop_value<bool>(o, prop_name, b)) return b ? "true" : "false";
+
+    UObject* ref = read_object_prop(o, prop_name);
+    if (ref)
+    {
+        return std::string("{\"object\":\"") + json_escape(obj_path(ref)) +
+               "\",\"class\":\"" + json_escape(class_name(ref)) + "\"}";
+    }
+
+    return "null";
+}
+
+static void write_prop(std::ofstream& json, UObject* o, const char* json_name, const wchar_t* prop_name, bool comma=true)
+{
+    json << "    \"" << json_name << "\":" << read_prop_as_json(o, prop_name);
+    if (comma) json << ",";
+    json << "\n";
+}
+
+static void scan_render_targets()
+{
+    file_log("Phase 2 scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 2 scan_render_targets started\n"));
+
+    auto out = out_dir();
+    std::ofstream json(out / "rt_native_scan.json");
+
+    json << "{\n";
+    json << "  \"version\": 2,\n";
+    json << "  \"note\": \"Native UE4SS RT metadata scan. Pixel export not enabled yet.\",\n";
+    json << "  \"targets\": [\n";
+
+    bool first = true;
+    int found = 0;
+    int scanned = 0;
+
+    UObjectGlobals::ForEachUObject([&](UObject* o, int32, int32) -> RC::LoopAction {
+        if (!o) return RC::LoopAction::Continue;
+
+        scanned++;
+
+        std::string path = obj_path(o);
+        if (!name_contains_target(path)) return RC::LoopAction::Continue;
+
+        std::string cls = class_name(o);
+
+        // Keep output focused on texture/render-target-like objects.
+        if (cls.find("Texture") == std::string::npos &&
+            cls.find("RenderTarget") == std::string::npos)
+        {
+            return RC::LoopAction::Continue;
+        }
+
+        found++;
+
+        if (!first) json << ",\n";
+        first = false;
+
+        json << "  {\n";
+        json << "    \"name\":\"" << json_escape(obj_name(o)) << "\",\n";
+        json << "    \"path\":\"" << json_escape(path) << "\",\n";
+        json << "    \"class\":\"" << json_escape(cls) << "\",\n";
+        json << "    \"address\":\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\",\n";
+
+        write_prop(json, o, "SizeX", STR("SizeX"));
+        write_prop(json, o, "SizeY", STR("SizeY"));
+        write_prop(json, o, "Slices", STR("Slices"));
+        write_prop(json, o, "OverrideFormat", STR("OverrideFormat"));
+        write_prop(json, o, "RenderTargetFormat", STR("RenderTargetFormat"));
+        write_prop(json, o, "PixelFormat", STR("PixelFormat"));
+        write_prop(json, o, "Format", STR("Format"));
+        write_prop(json, o, "SRGB", STR("SRGB"));
+        write_prop(json, o, "bHDR", STR("bHDR"));
+        write_prop(json, o, "bForceLinearGamma", STR("bForceLinearGamma"));
+        write_prop(json, o, "Filter", STR("Filter"));
+        write_prop(json, o, "LODGroup", STR("LODGroup"));
+        write_prop(json, o, "CompressionSettings", STR("CompressionSettings"));
+        write_prop(json, o, "NeverStream", STR("NeverStream"));
+        write_prop(json, o, "Source", STR("Source"));
+        write_prop(json, o, "PlatformData", STR("PlatformData"));
+        write_prop(json, o, "Resource", STR("Resource"), false);
+
+        json << "  }";
+
+        return RC::LoopAction::Continue;
+    });
+
+    json << "\n  ],\n";
+    json << "  \"scanned_objects\":" << scanned << ",\n";
+    json << "  \"found_targets\":" << found << ",\n";
+    json << "  \"pixel_export_enabled\": false\n";
+    json << "}\n";
+
+    json.close();
+
+    std::ofstream done(out / "rt_native_scan_done");
+    done << "ok\n";
+    done.close();
+
+    file_log("Phase 2 scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 2 done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -48,33 +287,35 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.1.0");
+        ModVersion = STR("0.2.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter on_unreal_init\n"));
-        file_log("RTNativeExporter on_unreal_init");
-        file_log("Phase 1 lifecycle OK");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.2 on_unreal_init");
     }
 
     auto on_update() -> void override
     {
         m_frame_count++;
 
-        if (!m_logged_update && m_frame_count > 60)
-        {
-            m_logged_update = true;
-            Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter on_update OK\n"));
-            file_log("RTNativeExporter on_update OK");
-        }
+        // Retry-style native scan: wait a bit for world/assets, then scan every ~30 sec up to 12 times.
+        if (m_attempts_done >= 12) return;
+        if (m_frame_count < 300) return;
+        if ((m_frame_count - 300) % 1800 != 0) return;
+
+        m_attempts_done++;
+
+        file_log("Native scan attempt " + std::to_string(m_attempts_done));
+        scan_render_targets();
     }
 
 private:
     int m_frame_count = 0;
-    bool m_logged_update = false;
+    int m_attempts_done = 0;
 };
 
 extern "C" __declspec(dllexport) RC::CppUserModBase* start_mod()
