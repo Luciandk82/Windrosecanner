@@ -39,9 +39,22 @@ jobs:
         shell: pwsh
         run: |
           cd cpp-mods/build
+          Write-Host "PWD:"
+          Get-Location
+          Write-Host "Top-level files:"
+          Get-ChildItem | Select-Object Name,FullName
+          Write-Host "All SLN:"
           Get-ChildItem -Recurse -Filter *.sln | Select-Object FullName
-          Get-ChildItem -Recurse -Filter *.vcxproj | Select-Object FullName
-          Select-String -Path *.sln -Pattern "GlobalSection\(SolutionConfigurationPlatforms\)","GlobalSection\(ProjectConfigurationPlatforms\)","Debug\|","Release\|" -Context 0,20
+          Write-Host "RTNativeExporter vcxproj:"
+          Get-ChildItem -Recurse -Filter RTNativeExporter.vcxproj | Select-Object FullName
+          Write-Host "ZERO_CHECK vcxproj:"
+          Get-ChildItem -Recurse -Filter ZERO_CHECK.vcxproj | Select-Object FullName
+          Write-Host "RTNativeExporter project configs:"
+          $p = Get-ChildItem -Recurse -Filter RTNativeExporter.vcxproj | Select-Object -First 1
+          if ($p) { Select-String -Path $p.FullName -Pattern "ProjectConfiguration|ConfigurationType|PlatformToolset|OutDir|IntDir" -Context 0,3 }
+          Write-Host "ZERO_CHECK project configs:"
+          $z = Get-ChildItem -Recurse -Filter ZERO_CHECK.vcxproj | Select-Object -First 1
+          if ($z) { Select-String -Path $z.FullName -Pattern "ProjectConfiguration|ConfigurationType|PlatformToolset|OutDir|IntDir" -Context 0,3 }
 
       - name: Build RTNativeExporter
         shell: pwsh
