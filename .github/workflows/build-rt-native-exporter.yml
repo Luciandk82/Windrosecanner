@@ -11,7 +11,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Clone UE4SS recursively with Epic-access token
+      - name: Clone UE4SS with Epic-access token and patch submodules
         shell: bash
         env:
           EPIC_GITHUB_TOKEN: ${{ secrets.EPIC_GITHUB_TOKEN }}
@@ -19,8 +19,16 @@ jobs:
           git config --global url."https://x-access-token:${EPIC_GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
           git config --global url."https://x-access-token:${EPIC_GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
           git config --global url."https://x-access-token:${EPIC_GITHUB_TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
+
           cd cpp-mods
-          git clone --recursive https://github.com/UE4SS-RE/RE-UE4SS.git
+          git clone https://github.com/UE4SS-RE/RE-UE4SS.git
+          cd RE-UE4SS
+
+          sed -i 's#git@github.com:#https://x-access-token:'"${EPIC_GITHUB_TOKEN}"'@github.com/#g' .gitmodules
+          sed -i 's#ssh://git@github.com/#https://x-access-token:'"${EPIC_GITHUB_TOKEN}"'@github.com/#g' .gitmodules
+
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
       - name: Configure
         run: |
