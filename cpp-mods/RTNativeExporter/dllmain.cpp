@@ -113,25 +113,63 @@ static std::string class_name(UObject* o)
     catch (...) { return ""; }
 }
 
-static bool name_contains_target(const std::string& path)
+
+static bool text_contains_any(const std::string& path)
 {
-    static const std::vector<std::string> targets = {
-        "RT_LandscapeTable",
-        "RT_LandscapeHeights",
-        "RT_Biomes",
-        "RT_SubBiomes",
-        "RT_BiomeDistanceFields",
-        "RT_VoronoiTriangleList",
-        "RT_MapCapture",
-        "RT_MapFog"
+    static const std::vector<std::string> tokens = {
+        "RT_",
+        "Landscape",
+        "Biome",
+        "SubBiome",
+        "DistanceField",
+        "Voronoi",
+        "Map",
+        "Capture",
+        "Fog",
+        "Terrain",
+        "Volum",
+        "Height",
+        "RenderTarget",
+        "Genlandia",
+        "Transient"
     };
 
-    for (auto& t : targets)
+    for (auto& t : tokens)
     {
         if (path.find(t) != std::string::npos) return true;
     }
 
     return false;
+}
+
+static bool name_contains_target(const std::string& path)
+{
+    return text_contains_any(path);
+}
+
+static std::string outer_chain(UObject* o, int max_depth = 8)
+{
+    std::string out;
+    UObject* cur = nullptr;
+
+    try { cur = o ? o->GetOuterPrivate() : nullptr; } catch (...) { cur = nullptr; }
+
+    int depth = 0;
+    while (cur && depth < max_depth)
+    {
+        if (!out.empty()) out += " <- ";
+        out += obj_path(cur);
+        try { cur = cur->GetOuterPrivate(); } catch (...) { cur = nullptr; }
+        depth++;
+    }
+
+    return out;
+}
+
+static bool is_rt_class_name(const std::string& cls)
+{
+    return cls.find("TextureRenderTarget2D") != std::string::npos ||
+           cls.find("TextureRenderTarget2DArray") != std::string::npos;
 }
 
 template <typename T>
@@ -199,11 +237,11 @@ static void write_prop(std::ofstream& json, UObject* o, const char* json_name, c
 
 static void scan_render_targets()
 {
-    file_log("Phase 2 scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 2 scan_render_targets started\n"));
+    file_log("Phase 3 scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 3 scan_render_targets started\n"));
 
     auto out = out_dir();
-    std::ofstream json(out / "rt_native_scan.json");
+    std::ofstream json(out / "rt_native_runtime_scan.json");
 
     json << "{\n";
     json << "  \"version\": 2,\n";
@@ -224,9 +262,17 @@ static void scan_render_targets()
 
         std::string cls = class_name(o);
 
-        // Keep output focused on texture/render-target-like objects.
-        if (cls.find("Texture") == std::string::npos &&
-            cls.find("RenderTarget") == std::string::npos)
+        if (!is_rt_class_name(cls))
+        {
+            return RC::LoopAction::Continue;
+        }
+
+        int32_t sx_tmp = 0;
+        int32_t sy_tmp = 0;
+        read_prop_value<int32_t>(o, STR("SizeX"), sx_tmp);
+        read_prop_value<int32_t>(o, STR("SizeY"), sy_tmp);
+
+        if (!text_contains_any(path) && sx_tmp <= 1 && sy_tmp <= 1)
         {
             return RC::LoopAction::Continue;
         }
@@ -241,6 +287,7 @@ static void scan_render_targets()
         json << "    \"path\":\"" << json_escape(path) << "\",\n";
         json << "    \"class\":\"" << json_escape(cls) << "\",\n";
         json << "    \"address\":\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\",\n";
+        json << "    \"outer_chain\":\"" << json_escape(outer_chain(o)) << "\",\n";
 
         write_prop(json, o, "SizeX", STR("SizeX"));
         write_prop(json, o, "SizeY", STR("SizeY"));
@@ -273,12 +320,12 @@ static void scan_render_targets()
 
     json.close();
 
-    std::ofstream done(out / "rt_native_scan_done");
+    std::ofstream done(out / "rt_native_runtime_scan_done");
     done << "ok\n";
     done.close();
 
-    file_log("Phase 2 scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 2 done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 3 scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 3 done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -287,15 +334,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.2.0");
+        ModVersion = STR("0.3.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.3 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.3 on_unreal_init");
     }
 
     auto on_update() -> void override
