@@ -378,7 +378,7 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 5C resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 5D resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
 
@@ -468,7 +468,7 @@ static void write_native_memory_probe(UObject* o)
 
     f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 5C native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 5D native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5B_NATIVE_MEMORY_PROBE
 
@@ -573,14 +573,130 @@ static void write_deep_pointer_probe(UObject* o)
 
     f << "note=Phase5C deep pointer probe. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 5C deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 5D deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5C_DEEP_POINTER_PROBE
 
+
+
+// BEGIN PHASE5D_TARGETED_CHAIN_PROBE
+static void dump_chain_level(std::ofstream& f, const std::string& label, uint8_t* ptr, int level)
+{
+    if (!ptr || !mem_readable(ptr, 0x400)) {
+        f << label << " level=" << level << " readable=0\n";
+        return;
+    }
+
+    f << label << " level=" << level << " ptr=0x" << std::hex << reinterpret_cast<uintptr_t>(ptr) << std::dec << "\n";
+
+    for (size_t off = 0; off < 0x400; off += 8)
+    {
+        if (!mem_readable(ptr + off, 8)) continue;
+
+        uint64_t q = *reinterpret_cast<uint64_t*>(ptr + off);
+        uint32_t lo = static_cast<uint32_t>(q & 0xffffffff);
+        uint32_t hi = static_cast<uint32_t>((q >> 32) & 0xffffffff);
+
+        bool interesting =
+            q == 2048 || q == 4096 || q == 4194304 || q == 16777216 ||
+            lo == 2048 || hi == 2048 ||
+            lo == 4096 || hi == 4096 ||
+            lo == 4194304 || hi == 4194304 ||
+            lo == 16777216 || hi == 16777216 ||
+            looks_like_ptr(q);
+
+        if (!interesting) continue;
+
+        f << "  +0x" << std::hex << off
+          << " q=0x" << q
+          << " lo=" << std::dec << lo
+          << " hi=" << hi;
+
+        if (q == 2048 || lo == 2048 || hi == 2048) f << " <-- 2048";
+        if (q == 16777216 || lo == 16777216 || hi == 16777216) f << " <-- 16MB";
+        if (q == 4194304 || lo == 4194304 || hi == 4194304) f << " <-- 4MP";
+
+        if (looks_like_ptr(q))
+        {
+            f << " ptr_readable=" << (mem_readable(reinterpret_cast<void*>(q), 0x80) ? 1 : 0);
+        }
+
+        f << "\n";
+    }
+}
+
+static void write_targeted_chain_probe(UObject* o)
+{
+    if (!o) return;
+
+    std::string path = obj_path(o);
+    if (path.find("RT_MapCapture") == std::string::npos) return;
+
+    auto out = out_dir();
+    std::ofstream f(out / "RT_MapCapture_targeted_chain_probe.txt", std::ios::app);
+
+    int32_t sx = 0;
+    int32_t sy = 0;
+    read_prop_value<int32_t>(o, STR("SizeX"), sx);
+    read_prop_value<int32_t>(o, STR("SizeY"), sy);
+
+    f << "object=" << path << "\n";
+    f << "class=" << class_name(o) << "\n";
+    f << "SizeX=" << sx << "\n";
+    f << "SizeY=" << sy << "\n";
+    f << "object_address=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+
+    uint8_t* base = reinterpret_cast<uint8_t*>(o);
+    if (!mem_readable(base, 0x500))
+    {
+        f << "object_memory_readable=false\n\n";
+        return;
+    }
+
+    size_t root_offsets[] = {0x20, 0x50, 0x80, 0xa0, 0x130, 0x300, 0x308, 0x310, 0x320, 0x330, 0x378};
+
+    for (size_t root_off : root_offsets)
+    {
+        if (!mem_readable(base + root_off, 8)) continue;
+
+        uint64_t p1v = *reinterpret_cast<uint64_t*>(base + root_off);
+        f << "\nROOT off=0x" << std::hex << root_off << " p1=0x" << p1v << std::dec
+          << " readable=" << (mem_readable(reinterpret_cast<void*>(p1v), 0x80) ? 1 : 0) << "\n";
+
+        if (!looks_like_ptr(p1v)) continue;
+
+        uint8_t* p1 = reinterpret_cast<uint8_t*>(p1v);
+        dump_chain_level(f, "  L1", p1, 1);
+
+        if (!mem_readable(p1, 0x400)) continue;
+
+        for (size_t off2 = 0; off2 < 0x400; off2 += 8)
+        {
+            if (!mem_readable(p1 + off2, 8)) continue;
+
+            uint64_t p2v = *reinterpret_cast<uint64_t*>(p1 + off2);
+            if (!looks_like_ptr(p2v)) continue;
+            if (!mem_readable(reinterpret_cast<void*>(p2v), 0x80)) continue;
+
+            uint8_t* p2 = reinterpret_cast<uint8_t*>(p2v);
+
+            f << "  L2 from root+0x" << std::hex << root_off << " +0x" << off2
+              << " p2=0x" << p2v << std::dec << "\n";
+
+            dump_chain_level(f, "    L2", p2, 2);
+        }
+    }
+
+    f << "\nnote=Phase5D targeted chain probe for RT_MapCapture only. No ReadPixels and no memory copy export yet.\n\n";
+
+    file_log("Phase 5D targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
+}
+// END PHASE5D_TARGETED_CHAIN_PROBE
+
 static void scan_render_targets()
 {
-    file_log("Phase 5C scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5C scan_render_targets started\n"));
+    file_log("Phase 5D scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5D scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -625,6 +741,7 @@ static void scan_render_targets()
         write_resource_access_probe(o);
         write_native_memory_probe(o);
         write_deep_pointer_probe(o);
+        write_targeted_chain_probe(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -672,8 +789,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 5C scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5C done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 5D scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5D done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -682,15 +799,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.7.0");
+        ModVersion = STR("0.8.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.7 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.7 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.8 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.8 on_unreal_init");
     }
 
     auto on_update() -> void override
