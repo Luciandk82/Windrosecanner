@@ -372,35 +372,8 @@ static void write_resource_access_probe(UObject* o)
     f << "PlatformData=" << obj_path(platform) << " class=" << class_name(platform) << "\n";
     f << "Resource=" << obj_path(resource) << " class=" << class_name(resource) << "\n";
 
-    f << "class_children_interesting:\n";
-
-    try
-    {
-        auto* cls = o->GetClassPrivate();
-        if (cls)
-        {
-            auto* child = cls->GetChildProperties();
-            int prop_count = 0;
-
-            while (child && prop_count < 300)
-            {
-                std::string pn = wide_to_utf8(child->GetName());
-                if (function_name_interesting(pn))
-                {
-                    f << "  PROPERTY " << pn << "\n";
-                }
-
-                child = child->GetNext();
-                prop_count++;
-            }
-
-            f << "property_scan_count=" << prop_count << "\n";
-        }
-    }
-    catch (...)
-    {
-        f << "property_scan_exception\n";
-    }
+    f << "class_children_interesting=skipped\n";
+    f << "note2=Skipped FField iteration because GetNext is private in current UE4SS headers.\n";
 
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
