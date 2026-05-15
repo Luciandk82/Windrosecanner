@@ -7,6 +7,7 @@
 #include <Unreal/UClass.hpp>
 #include <Unreal/FProperty.hpp>
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <fstream>
 #include <filesystem>
@@ -378,7 +379,7 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 5D resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6A resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
 
@@ -468,7 +469,7 @@ static void write_native_memory_probe(UObject* o)
 
     f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 5D native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6A native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5B_NATIVE_MEMORY_PROBE
 
@@ -573,7 +574,7 @@ static void write_deep_pointer_probe(UObject* o)
 
     f << "note=Phase5C deep pointer probe. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 5D deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6A deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5C_DEEP_POINTER_PROBE
 
@@ -689,14 +690,184 @@ static void write_targeted_chain_probe(UObject* o)
 
     f << "\nnote=Phase5D targeted chain probe for RT_MapCapture only. No ReadPixels and no memory copy export yet.\n\n";
 
-    file_log("Phase 5D targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6A targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5D_TARGETED_CHAIN_PROBE
 
+
+
+// BEGIN PHASE6A_ENGINE_METHOD_DISCOVERY
+static bool phase6_mem_readable(const void* a, size_t len)
+{
+    if (!a || len == 0) return false;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(a, &mbi, sizeof(mbi))) return false;
+    if (mbi.State != MEM_COMMIT) return false;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return false;
+    auto start = reinterpret_cast<uintptr_t>(a);
+    auto end = start + len;
+    auto region_start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+    auto region_end = region_start + mbi.RegionSize;
+    return end >= start && start >= region_start && end <= region_end;
+}
+
+static bool phase6_page_scan_ascii(uint8_t* base, size_t size, const char* needle)
+{
+    if (!base || !needle) return false;
+    size_t n = std::strlen(needle);
+    if (n == 0 || size < n) return false;
+
+    for (size_t i = 0; i + n <= size; ++i)
+    {
+        if (std::memcmp(base + i, needle, n) == 0) return true;
+    }
+    return false;
+}
+
+static bool phase6_page_scan_utf16(uint8_t* base, size_t size, const char* needle)
+{
+    if (!base || !needle) return false;
+    size_t n = std::strlen(needle);
+    if (n == 0 || size < n * 2) return false;
+
+    for (size_t i = 0; i + (n * 2) <= size; ++i)
+    {
+        bool ok = true;
+        for (size_t j = 0; j < n; ++j)
+        {
+            if (base[i + j * 2] != static_cast<uint8_t>(needle[j]) || base[i + j * 2 + 1] != 0)
+            {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return true;
+    }
+    return false;
+}
+
+static void phase6_scan_module_for_needles(std::ofstream& f, const MODULEENTRY32W& me)
+{
+    const char* needles[] = {
+        "GameThread_GetRenderTargetResource",
+        "ReadPixels",
+        "ReadLinearColorPixels",
+        "RHILockTexture2D",
+        "FTextureRenderTargetResource",
+        "UTextureRenderTarget2D",
+        "TextureRenderTarget2D",
+        "FRenderTarget",
+        "RenderTargetResource",
+        "RHITexture",
+        "FRHITexture",
+        "LockTexture2D",
+        "RHIMapStagingSurface",
+        "ReadSurfaceData"
+    };
+
+    uint8_t* module_base = reinterpret_cast<uint8_t*>(me.modBaseAddr);
+    size_t module_size = static_cast<size_t>(me.modBaseSize);
+
+    f << "module=";
+    for (wchar_t c : std::wstring(me.szModule))
+    {
+        if (c == 0) break;
+        f << static_cast<char>(c < 128 ? c : '?');
+    }
+    f << " base=0x" << std::hex << reinterpret_cast<uintptr_t>(module_base)
+      << " size=0x" << module_size << std::dec << "\n";
+
+    uintptr_t cur = reinterpret_cast<uintptr_t>(module_base);
+    uintptr_t end = cur + module_size;
+
+    while (cur < end)
+    {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof(mbi))) break;
+
+        uintptr_t region_start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+        uintptr_t region_end = region_start + mbi.RegionSize;
+        uintptr_t scan_start = cur > region_start ? cur : region_start;
+        uintptr_t scan_end = region_end < end ? region_end : end;
+
+        bool readable =
+            mbi.State == MEM_COMMIT &&
+            !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+
+        if (readable && scan_end > scan_start)
+        {
+            uint8_t* scan_ptr = reinterpret_cast<uint8_t*>(scan_start);
+            size_t scan_len = static_cast<size_t>(scan_end - scan_start);
+
+            if (scan_len > 0 && scan_len <= 64 * 1024 * 1024)
+            {
+                for (const char* needle : needles)
+                {
+                    bool ascii_hit = phase6_page_scan_ascii(scan_ptr, scan_len, needle);
+                    bool utf16_hit = phase6_page_scan_utf16(scan_ptr, scan_len, needle);
+
+                    if (ascii_hit || utf16_hit)
+                    {
+                        f << "  HIT needle=" << needle
+                          << " ascii=" << (ascii_hit ? 1 : 0)
+                          << " utf16=" << (utf16_hit ? 1 : 0)
+                          << " region=0x" << std::hex << scan_start << "-0x" << scan_end << std::dec
+                          << "\n";
+                    }
+                }
+            }
+        }
+
+        if (region_end <= cur) break;
+        cur = region_end;
+    }
+}
+
+static void phase6_engine_method_discovery()
+{
+    auto out = out_dir();
+    std::ofstream f(out / "phase6_engine_method_discovery.txt", std::ios::out);
+
+    f << "Phase 6A engine method discovery\n";
+    f << "Targets: GameThread_GetRenderTargetResource, ReadPixels, ReadLinearColorPixels, RHILockTexture2D, FTextureRenderTargetResource\n";
+    f << "Mode: scan loaded module memory for ASCII/UTF16 method/type strings. No calls. No ReadPixels. No GPU access.\n\n";
+
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, GetCurrentProcessId());
+    if (snap == INVALID_HANDLE_VALUE)
+    {
+        f << "CreateToolhelp32Snapshot failed\n";
+        return;
+    }
+
+    MODULEENTRY32W me{};
+    me.dwSize = sizeof(me);
+
+    if (!Module32FirstW(snap, &me))
+    {
+        f << "Module32FirstW failed\n";
+        CloseHandle(snap);
+        return;
+    }
+
+    do
+    {
+        phase6_scan_module_for_needles(f, me);
+    }
+    while (Module32NextW(snap, &me));
+
+    CloseHandle(snap);
+
+    f << "\nDone.\n";
+    file_log("Phase 6A engine method discovery wrote phase6_engine_method_discovery.txt");
+}
+// END PHASE6A_ENGINE_METHOD_DISCOVERY
+
 static void scan_render_targets()
 {
-    file_log("Phase 5D scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5D scan_render_targets started\n"));
+    static bool phase6_done = false;
+    if (!phase6_done) { phase6_done = true; phase6_engine_method_discovery(); }
+    file_log("Phase 6A scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6A scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -789,8 +960,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 5D scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5D done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 6A scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6A done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -799,15 +970,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.8.0");
+        ModVersion = STR("0.9.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.8 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.8 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.9 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.9 on_unreal_init");
     }
 
     auto on_update() -> void override
