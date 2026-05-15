@@ -114,33 +114,13 @@ static std::string class_name(UObject* o)
 }
 
 
-static bool text_contains_any(const std::string& path)
-{
-    static const std::vector<std::string> tokens = {
-        "RT_",
-        "Landscape",
-        "Biome",
-        "SubBiome",
-        "DistanceField",
-        "Voronoi",
-        "Map",
-        "Capture",
-        "Fog",
-        "Terrain",
-        "Volum",
-        "Height",
-        "RenderTarget",
-        "Genlandia",
-        "Transient"
-    };
 
-    for (auto& t : tokens)
-    {
-        if (path.find(t) != std::string::npos) return true;
-    }
 
-    return false;
-}
+
+
+
+
+
 
 
 static bool text_contains_any(const std::string& path)
@@ -163,9 +143,12 @@ static bool text_contains_any(const std::string& path)
         "Transient"
     };
 
-    for (auto& t : tokens)
+    for (const auto& t : tokens)
     {
-        if (path.find(t) != std::string::npos) return true;
+        if (path.find(t) != std::string::npos)
+        {
+            return true;
+        }
     }
 
     return false;
@@ -179,16 +162,38 @@ static bool name_contains_target(const std::string& path)
 static std::string outer_chain(UObject* o, int max_depth = 8)
 {
     std::string out;
+
     UObject* cur = nullptr;
 
-    try { cur = o ? o->GetOuterPrivate() : nullptr; } catch (...) { cur = nullptr; }
+    try
+    {
+        cur = o ? o->GetOuterPrivate() : nullptr;
+    }
+    catch (...)
+    {
+        cur = nullptr;
+    }
 
     int depth = 0;
+
     while (cur && depth < max_depth)
     {
-        if (!out.empty()) out += " <- ";
+        if (!out.empty())
+        {
+            out += " <- ";
+        }
+
         out += obj_path(cur);
-        try { cur = cur->GetOuterPrivate(); } catch (...) { cur = nullptr; }
+
+        try
+        {
+            cur = cur->GetOuterPrivate();
+        }
+        catch (...)
+        {
+            cur = nullptr;
+        }
+
         depth++;
     }
 
@@ -200,6 +205,7 @@ static bool is_rt_class_name(const std::string& cls)
     return cls.find("TextureRenderTarget2D") != std::string::npos ||
            cls.find("TextureRenderTarget2DArray") != std::string::npos;
 }
+
 
 template <typename T>
 static bool read_prop_value(UObject* o, const wchar_t* prop_name, T& out)
