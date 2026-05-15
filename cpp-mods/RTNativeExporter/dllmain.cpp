@@ -379,7 +379,7 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 6F resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6G resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
 
@@ -469,7 +469,7 @@ static void write_native_memory_probe(UObject* o)
 
     f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 6F native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6G native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5B_NATIVE_MEMORY_PROBE
 
@@ -574,7 +574,7 @@ static void write_deep_pointer_probe(UObject* o)
 
     f << "note=Phase5C deep pointer probe. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 6F deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6G deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5C_DEEP_POINTER_PROBE
 
@@ -690,7 +690,7 @@ static void write_targeted_chain_probe(UObject* o)
 
     f << "\nnote=Phase5D targeted chain probe for RT_MapCapture only. No ReadPixels and no memory copy export yet.\n\n";
 
-    file_log("Phase 6F targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6G targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5D_TARGETED_CHAIN_PROBE
 
@@ -828,7 +828,7 @@ static void phase6_engine_method_discovery()
     auto out = out_dir();
     std::ofstream f(out / "phase6_engine_method_discovery.txt", std::ios::out);
 
-    f << "Phase 6F engine method discovery\n";
+    f << "Phase 6G engine method discovery\n";
     f << "Targets: GameThread_GetRenderTargetResource, ReadPixels, ReadLinearColorPixels, RHILockTexture2D, FTextureRenderTargetResource\n";
     f << "Mode: scan loaded module memory for ASCII/UTF16 method/type strings. No calls. No ReadPixels. No GPU access.\n\n";
 
@@ -858,7 +858,7 @@ static void phase6_engine_method_discovery()
     CloseHandle(snap);
 
     f << "\nDone.\n";
-    file_log("Phase 6F engine method discovery wrote phase6_engine_method_discovery.txt");
+    file_log("Phase 6G engine method discovery wrote phase6_engine_method_discovery.txt");
 }
 // END PHASE6A_ENGINE_METHOD_DISCOVERY
 
@@ -900,7 +900,7 @@ static void phase6b_scan_context()
         "ReadSurfaceData"
     };
 
-    f << "Phase 6F string context scanner\n";
+    f << "Phase 6G string context scanner\n";
     f << "Goal: locate actual string addresses inside WindroseServer-Win64-Shipping.exe and dump nearby memory.\n";
     f << "No function calls. No ReadPixels. No GPU access.\n\n";
 
@@ -993,7 +993,7 @@ static void phase6b_scan_context()
         f << "  total_limited_hits=" << hits << "\n\n";
     }
 
-    file_log("Phase 6F wrote phase6b_string_context.txt");
+    file_log("Phase 6G wrote phase6b_string_context.txt");
 }
 // END PHASE6B_STRING_CONTEXT_SCANNER
 
@@ -1087,7 +1087,7 @@ static void write_phase6c_vtable_diagnostic(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    f << "Phase 6F vtable diagnostic\n";
+    f << "Phase 6G vtable diagnostic\n";
     f << "object=" << path << "\n";
     f << "class=" << class_name(o) << "\n";
     f << "SizeX=" << sx << "\n";
@@ -1154,7 +1154,7 @@ static void write_phase6c_vtable_diagnostic(UObject* o)
     }
 
     f << "\nnote=Phase6C only dumps vtable/function pointer diagnostics. No function calls, no ReadPixels, no GPU access.\n";
-    file_log("Phase 6F wrote phase6c_vtable_diagnostic.txt");
+    file_log("Phase 6G wrote phase6c_vtable_diagnostic.txt");
 }
 // END PHASE6C_VTABLE_DIAGNOSTIC
 
@@ -1193,7 +1193,7 @@ static void write_phase6d_raw_candidate_dump(UObject* o)
 
     const size_t expected = 2048ULL * 2048ULL * 4ULL;
 
-    log << "Phase 6F raw candidate dump\n";
+    log << "Phase 6G raw candidate dump\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1302,7 +1302,7 @@ static void write_phase6d_raw_candidate_dump(UObject* o)
     log << "\ndumped_count=" << dumped << "\n";
     log << "note=Phase6D only copies readable 16MB CPU memory candidates. No function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6F raw candidate dump done count=" + std::to_string(dumped));
+    file_log("Phase 6G raw candidate dump done count=" + std::to_string(dumped));
 }
 // END PHASE6D_RAW_CANDIDATE_DUMP
 
@@ -1339,7 +1339,7 @@ static void write_phase6e_small_candidate_dumps(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    log << "Phase 6F small candidate dumps\n";
+    log << "Phase 6G small candidate dumps\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1434,7 +1434,7 @@ static void write_phase6e_small_candidate_dumps(UObject* o)
     log << "\ndumped_files=" << dumped << "\n";
     log << "note=Phase6E dumps small readable chunks only. No function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6F small candidate dumps done files=" + std::to_string(dumped));
+    file_log("Phase 6G small candidate dumps done files=" + std::to_string(dumped));
 }
 // END PHASE6E_SMALL_CANDIDATE_DUMPS
 
@@ -1545,7 +1545,7 @@ static void write_phase6f_aggressive_resource_dump(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    log << "Phase 6F aggressive resource dump\n";
+    log << "Phase 6G aggressive resource dump\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1691,16 +1691,229 @@ static void write_phase6f_aggressive_resource_dump(UObject* o)
     log << "dumped=" << dumped << "\n";
     log << "note=Phase6F aggressive dump. Still no function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6F aggressive resource dump " + prefix + " dumped=" + std::to_string(dumped));
+    file_log("Phase 6G aggressive resource dump " + prefix + " dumped=" + std::to_string(dumped));
 }
 // END PHASE6F_AGGRESSIVE_RESOURCE_DUMP
+
+
+
+// BEGIN PHASE6G_STRING_NEIGHBORHOOD_PROBE
+static bool phase6g_is_ascii_printable(uint8_t c)
+{
+    return c >= 32 && c <= 126;
+}
+
+static std::string phase6g_read_ascii(uint8_t* p, size_t max_len)
+{
+    std::string out;
+    if (!p || !phase6_mem_readable(p, 1)) return out;
+
+    for (size_t i = 0; i < max_len; ++i)
+    {
+        if (!phase6_mem_readable(p + i, 1)) break;
+        uint8_t c = *(p + i);
+        if (c == 0) break;
+        if (!phase6g_is_ascii_printable(c)) break;
+        out.push_back((char)c);
+    }
+    return out;
+}
+
+static std::string phase6g_read_wide_ascii(uint8_t* p, size_t max_chars)
+{
+    std::string out;
+    if (!p || !phase6_mem_readable(p, 2)) return out;
+
+    for (size_t i = 0; i < max_chars; ++i)
+    {
+        uint8_t* q = p + i * 2;
+        if (!phase6_mem_readable(q, 2)) break;
+        uint8_t c = q[0];
+        uint8_t z = q[1];
+        if (c == 0 && z == 0) break;
+        if (z != 0 || !phase6g_is_ascii_printable(c)) break;
+        out.push_back((char)c);
+    }
+    return out;
+}
+
+static void write_phase6g_string_neighborhood_probe(UObject* o)
+{
+    static bool done = false;
+    if (done || !o) return;
+
+    std::string path = obj_path(o);
+    if (path.find("RT_MapCapture") == std::string::npos) return;
+
+    done = true;
+
+    auto out = out_dir();
+    std::ofstream log(out / "phase6g_string_neighborhood_probe.txt", std::ios::out);
+
+    log << "Phase 6G targeted string-neighborhood probe\n";
+    log << "trigger_object=" << path << "\n";
+    log << "trigger_class=" << class_name(o) << "\n\n";
+
+    const char* needles[] = {
+        "R5UTextureUtils.cpp",
+        "TextureResource.h",
+        "OpenGLTexture.cpp",
+        "ReadLinearColor",
+        "CanvasForDrawMaterialToRenderTarget",
+        "RenderTargetPool.cpp",
+        "RHILockTracker.cpp",
+        "Render to Texture",
+        "Invalid size",
+        "DefaultRenderTargetFormat",
+        "GetRenderTargetSize",
+        "SetRenderTargetSize",
+        "SampleRenderTargetValue",
+        "LoadRenderTargetValue",
+        "SetRenderTargetValue"
+    };
+
+    HMODULE hExe = GetModuleHandleW(nullptr);
+    if (!hExe)
+    {
+        log << "GetModuleHandleW(nullptr) failed\n";
+        return;
+    }
+
+    MODULEINFO mi{};
+    if (!GetModuleInformation(GetCurrentProcess(), hExe, &mi, sizeof(mi)))
+    {
+        log << "GetModuleInformation failed\n";
+        return;
+    }
+
+    uint8_t* base = reinterpret_cast<uint8_t*>(mi.lpBaseOfDll);
+    size_t size = static_cast<size_t>(mi.SizeOfImage);
+
+    log << "module_base=0x" << std::hex << reinterpret_cast<uintptr_t>(base)
+        << " module_size=0x" << size << std::dec << "\n\n";
+
+    const size_t max_scan = size;
+    int total_hits = 0;
+
+    for (const char* needle : needles)
+    {
+        size_t nlen = std::strlen(needle);
+        log << "\n=== NEEDLE " << needle << " ===\n";
+
+        int hits = 0;
+
+        for (size_t off = 0; off + nlen < max_scan; ++off)
+        {
+            uint8_t* p = base + off;
+            if (!phase6_mem_readable(p, nlen)) continue;
+
+            bool match = std::memcmp(p, needle, nlen) == 0;
+
+            if (!match)
+            {
+                // wide ASCII variant
+                bool wmatch = true;
+                for (size_t i = 0; i < nlen; ++i)
+                {
+                    if (!phase6_mem_readable(p + i * 2, 2)) { wmatch = false; break; }
+                    if (p[i * 2] != (uint8_t)needle[i] || p[i * 2 + 1] != 0) { wmatch = false; break; }
+                }
+                match = wmatch;
+            }
+
+            if (!match) continue;
+
+            hits++;
+            total_hits++;
+
+            log << "hit_" << hits
+                << " addr=0x" << std::hex << reinterpret_cast<uintptr_t>(p)
+                << " rva=0x" << off << std::dec << "\n";
+
+            // Dump nearby strings.
+            size_t start = off > 512 ? off - 512 : 0;
+            size_t end = std::min(max_scan, off + 2048);
+
+            log << "nearby_strings:\n";
+            for (size_t qoff = start; qoff < end; ++qoff)
+            {
+                uint8_t* q = base + qoff;
+                if (!phase6_mem_readable(q, 8)) continue;
+
+                auto a = phase6g_read_ascii(q, 160);
+                if (a.size() >= 8)
+                {
+                    log << "  ascii rva=0x" << std::hex << qoff << std::dec << " " << a << "\n";
+                    qoff += a.size();
+                    continue;
+                }
+
+                auto w = phase6g_read_wide_ascii(q, 160);
+                if (w.size() >= 8)
+                {
+                    log << "  wide  rva=0x" << std::hex << qoff << std::dec << " " << w << "\n";
+                    qoff += w.size() * 2;
+                    continue;
+                }
+            }
+
+            // Search for nearby references to the string address in module memory.
+            uint64_t addr = reinterpret_cast<uint64_t>(p);
+            log << "xrefs_to_string_addr:\n";
+
+            int xrefs = 0;
+            for (size_t x = 0; x + 8 < max_scan; x += 1)
+            {
+                uint8_t* xp = base + x;
+                if (!phase6_mem_readable(xp, 8)) continue;
+
+                uint64_t val = *reinterpret_cast<uint64_t*>(xp);
+                if (val != addr) continue;
+
+                xrefs++;
+                log << "  xref_" << xrefs
+                    << " at=0x" << std::hex << reinterpret_cast<uintptr_t>(xp)
+                    << " rva=0x" << x << std::dec << "\n";
+
+                // Dump bytes around xref.
+                size_t bx = x > 128 ? x - 128 : 0;
+                log << "  bytes_around_xref:\n";
+                for (size_t line = 0; line < 256; line += 16)
+                {
+                    uint8_t* bp = base + bx + line;
+                    if (!phase6_mem_readable(bp, 16)) continue;
+                    log << "    rva=0x" << std::hex << (bx + line) << " ";
+                    for (int k = 0; k < 16; ++k)
+                    {
+                        unsigned int b = bp[k];
+                        if (b < 16) log << "0";
+                        log << b << " ";
+                    }
+                    log << std::dec << "\n";
+                }
+
+                if (xrefs >= 20) break;
+            }
+
+            if (hits >= 20) break;
+        }
+
+        log << "needle_hits=" << hits << "\n";
+    }
+
+    log << "\ntotal_hits=" << total_hits << "\n";
+    log << "note=Phase6G scans exe memory for known texture/render strings and xrefs. No function calls, no GPU API.\n";
+
+    file_log("Phase 6G string-neighborhood probe done hits=" + std::to_string(total_hits));
+}
+// END PHASE6G_STRING_NEIGHBORHOOD_PROBE
 
 static void scan_render_targets()
 {
     static bool phase6_done = false;
     if (!phase6_done) { phase6_done = true; phase6_engine_method_discovery(); phase6b_scan_context(); }
-    file_log("Phase 6F scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6F scan_render_targets started\n"));
+    file_log("Phase 6G scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6G scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -1750,6 +1963,7 @@ static void scan_render_targets()
         write_phase6d_raw_candidate_dump(o);
         write_phase6e_small_candidate_dumps(o);
         write_phase6f_aggressive_resource_dump(o);
+        write_phase6g_string_neighborhood_probe(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -1797,8 +2011,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 6F scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6F done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 6G scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6G done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -1807,15 +2021,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.4.0");
+        ModVersion = STR("1.5.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.4 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.4 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.5 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.5 on_unreal_init");
     }
 
     auto on_update() -> void override
