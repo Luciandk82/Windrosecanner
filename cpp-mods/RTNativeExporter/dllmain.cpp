@@ -632,7 +632,13 @@ static void write_targeted_chain_probe(UObject* o)
     if (!o) return;
 
     std::string path = obj_path(o);
-    if (path.find("RT_MapCapture") == std::string::npos) return;
+    if (path.find("RT_MapCapture") == std::string::npos)
+    {
+        file_log("Phase 6G skip non-MapCapture: " + path);
+        return;
+    }
+
+    file_log("Phase 6G processing MapCapture: " + path);
 
     auto out = out_dir();
     std::ofstream f(out / "RT_MapCapture_targeted_chain_probe.txt", std::ios::app);
@@ -1744,8 +1750,13 @@ static std::string phase6g_read_wide_ascii(uint8_t* p, size_t max_chars)
 
 static void write_phase6g_string_neighborhood_probe(UObject* o)
 {
+    file_log("Phase 6G string-neighborhood entered");
     static bool done = false;
-    if (done || !o) return;
+    if (done || !o)
+    {
+        file_log("Phase 6G early return: done or null object");
+        return;
+    }
 
     std::string path = obj_path(o);
     if (path.find("RT_MapCapture") == std::string::npos) return;
@@ -1967,8 +1978,8 @@ static void scan_render_targets()
         write_phase6c_vtable_diagnostic(o);
         write_phase6d_raw_candidate_dump(o);
         write_phase6e_small_candidate_dumps(o);
-        write_phase6f_aggressive_resource_dump(o);
         write_phase6g_string_neighborhood_probe(o);
+        write_phase6f_aggressive_resource_dump(o);
 
         if (!first) json << ",\n";
         first = false;
