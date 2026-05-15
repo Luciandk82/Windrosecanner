@@ -379,7 +379,7 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 6E resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6F resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
 
@@ -469,7 +469,7 @@ static void write_native_memory_probe(UObject* o)
 
     f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 6E native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6F native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5B_NATIVE_MEMORY_PROBE
 
@@ -574,7 +574,7 @@ static void write_deep_pointer_probe(UObject* o)
 
     f << "note=Phase5C deep pointer probe. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 6E deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6F deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5C_DEEP_POINTER_PROBE
 
@@ -690,7 +690,7 @@ static void write_targeted_chain_probe(UObject* o)
 
     f << "\nnote=Phase5D targeted chain probe for RT_MapCapture only. No ReadPixels and no memory copy export yet.\n\n";
 
-    file_log("Phase 6E targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 6F targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5D_TARGETED_CHAIN_PROBE
 
@@ -828,7 +828,7 @@ static void phase6_engine_method_discovery()
     auto out = out_dir();
     std::ofstream f(out / "phase6_engine_method_discovery.txt", std::ios::out);
 
-    f << "Phase 6E engine method discovery\n";
+    f << "Phase 6F engine method discovery\n";
     f << "Targets: GameThread_GetRenderTargetResource, ReadPixels, ReadLinearColorPixels, RHILockTexture2D, FTextureRenderTargetResource\n";
     f << "Mode: scan loaded module memory for ASCII/UTF16 method/type strings. No calls. No ReadPixels. No GPU access.\n\n";
 
@@ -858,7 +858,7 @@ static void phase6_engine_method_discovery()
     CloseHandle(snap);
 
     f << "\nDone.\n";
-    file_log("Phase 6E engine method discovery wrote phase6_engine_method_discovery.txt");
+    file_log("Phase 6F engine method discovery wrote phase6_engine_method_discovery.txt");
 }
 // END PHASE6A_ENGINE_METHOD_DISCOVERY
 
@@ -900,7 +900,7 @@ static void phase6b_scan_context()
         "ReadSurfaceData"
     };
 
-    f << "Phase 6E string context scanner\n";
+    f << "Phase 6F string context scanner\n";
     f << "Goal: locate actual string addresses inside WindroseServer-Win64-Shipping.exe and dump nearby memory.\n";
     f << "No function calls. No ReadPixels. No GPU access.\n\n";
 
@@ -993,7 +993,7 @@ static void phase6b_scan_context()
         f << "  total_limited_hits=" << hits << "\n\n";
     }
 
-    file_log("Phase 6E wrote phase6b_string_context.txt");
+    file_log("Phase 6F wrote phase6b_string_context.txt");
 }
 // END PHASE6B_STRING_CONTEXT_SCANNER
 
@@ -1087,7 +1087,7 @@ static void write_phase6c_vtable_diagnostic(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    f << "Phase 6E vtable diagnostic\n";
+    f << "Phase 6F vtable diagnostic\n";
     f << "object=" << path << "\n";
     f << "class=" << class_name(o) << "\n";
     f << "SizeX=" << sx << "\n";
@@ -1154,7 +1154,7 @@ static void write_phase6c_vtable_diagnostic(UObject* o)
     }
 
     f << "\nnote=Phase6C only dumps vtable/function pointer diagnostics. No function calls, no ReadPixels, no GPU access.\n";
-    file_log("Phase 6E wrote phase6c_vtable_diagnostic.txt");
+    file_log("Phase 6F wrote phase6c_vtable_diagnostic.txt");
 }
 // END PHASE6C_VTABLE_DIAGNOSTIC
 
@@ -1193,7 +1193,7 @@ static void write_phase6d_raw_candidate_dump(UObject* o)
 
     const size_t expected = 2048ULL * 2048ULL * 4ULL;
 
-    log << "Phase 6E raw candidate dump\n";
+    log << "Phase 6F raw candidate dump\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1302,7 +1302,7 @@ static void write_phase6d_raw_candidate_dump(UObject* o)
     log << "\ndumped_count=" << dumped << "\n";
     log << "note=Phase6D only copies readable 16MB CPU memory candidates. No function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6E raw candidate dump done count=" + std::to_string(dumped));
+    file_log("Phase 6F raw candidate dump done count=" + std::to_string(dumped));
 }
 // END PHASE6D_RAW_CANDIDATE_DUMP
 
@@ -1339,7 +1339,7 @@ static void write_phase6e_small_candidate_dumps(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    log << "Phase 6E small candidate dumps\n";
+    log << "Phase 6F small candidate dumps\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1434,16 +1434,273 @@ static void write_phase6e_small_candidate_dumps(UObject* o)
     log << "\ndumped_files=" << dumped << "\n";
     log << "note=Phase6E dumps small readable chunks only. No function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6E small candidate dumps done files=" + std::to_string(dumped));
+    file_log("Phase 6F small candidate dumps done files=" + std::to_string(dumped));
 }
 // END PHASE6E_SMALL_CANDIDATE_DUMPS
+
+
+
+// BEGIN PHASE6F_AGGRESSIVE_RESOURCE_DUMP
+static bool phase6f_dump_file(const std::filesystem::path& path, void* ptr, size_t len)
+{
+    if (!ptr || len == 0) return false;
+    if (!phase6_mem_readable(ptr, len)) return false;
+
+    std::ofstream out(path, std::ios::binary);
+    if (!out) return false;
+
+    out.write(reinterpret_cast<const char*>(ptr), len);
+    return out.good();
+}
+
+static uint32_t phase6f_u32(uint8_t* p)
+{
+    return *reinterpret_cast<uint32_t*>(p);
+}
+
+static uint64_t phase6f_u64(uint8_t* p)
+{
+    return *reinterpret_cast<uint64_t*>(p);
+}
+
+static bool phase6f_interesting_u32(uint32_t v)
+{
+    return v == 1 || v == 2 || v == 4 ||
+           v == 512 || v == 1024 || v == 2048 || v == 4096 ||
+           v == 4194304 || v == 8388608 || v == 16777216 ||
+           v == 50331909 || v == 50332420 ||
+           v == 16973825 || v == 16973827;
+}
+
+static void phase6f_scan_block(std::ofstream& log, const std::string& label, uint8_t* ptr, size_t max_scan)
+{
+    if (!ptr || !phase6_mem_readable(ptr, 0x1000)) return;
+
+    size_t scan_len = max_scan;
+    while (scan_len >= 0x1000 && !phase6_mem_readable(ptr, scan_len))
+        scan_len /= 2;
+
+    if (scan_len < 0x1000) scan_len = 0x1000;
+
+    log << "\nSCAN label=" << label
+        << " addr=0x" << std::hex << reinterpret_cast<uintptr_t>(ptr)
+        << " scan_len=" << std::dec << scan_len << "\n";
+
+    for (size_t off = 0; off + 8 <= scan_len; off += 4)
+    {
+        if (!phase6_mem_readable(ptr + off, 8)) continue;
+
+        uint32_t a = phase6f_u32(ptr + off);
+        uint32_t b = phase6f_u32(ptr + off + 4);
+        uint64_t q = phase6f_u64(ptr + off);
+
+        bool hit =
+            phase6f_interesting_u32(a) ||
+            phase6f_interesting_u32(b) ||
+            q == 2048ULL ||
+            q == 4096ULL ||
+            q == 4194304ULL ||
+            q == 8388608ULL ||
+            q == 16777216ULL ||
+            looks_like_ptr(q);
+
+        if (!hit) continue;
+
+        log << "  +0x" << std::hex << off
+            << " u32a=" << std::dec << a
+            << " u32b=" << b
+            << " q=0x" << std::hex << q << std::dec;
+
+        if (a == 2048 || b == 2048 || q == 2048) log << " HIT_2048";
+        if (a == 4194304 || b == 4194304 || q == 4194304) log << " HIT_4MP";
+        if (a == 16777216 || b == 16777216 || q == 16777216) log << " HIT_16MB";
+        if (a == 16973825 || b == 16973825 || a == 16973827 || b == 16973827) log << " HIT_RT_FORMAT";
+
+        if (looks_like_ptr(q))
+            log << " ptr_readable=" << (phase6_mem_readable(reinterpret_cast<void*>(q), 0x1000) ? 1 : 0);
+
+        log << "\n";
+    }
+}
+
+static void write_phase6f_aggressive_resource_dump(UObject* o)
+{
+    static int done_count = 0;
+    if (!o || done_count >= 2) return;
+
+    std::string path = obj_path(o);
+    bool is_capture = path.find("RT_MapCapture") != std::string::npos;
+    bool is_fog = path.find("RT_MapFog") != std::string::npos;
+
+    if (!is_capture && !is_fog) return;
+    done_count++;
+
+    std::string prefix = is_capture ? "RT_MapCapture" : "RT_MapFog";
+
+    auto out = out_dir();
+    std::ofstream log(out / (prefix + "_phase6f_aggressive_resource_dump.txt"), std::ios::out);
+
+    int32_t sx = 0;
+    int32_t sy = 0;
+    read_prop_value<int32_t>(o, STR("SizeX"), sx);
+    read_prop_value<int32_t>(o, STR("SizeY"), sy);
+
+    log << "Phase 6F aggressive resource dump\n";
+    log << "object=" << path << "\n";
+    log << "class=" << class_name(o) << "\n";
+    log << "SizeX=" << sx << "\n";
+    log << "SizeY=" << sy << "\n";
+    log << "object_address=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n\n";
+
+    uint8_t* base = reinterpret_cast<uint8_t*>(o);
+    if (!phase6_mem_readable(base, 0x500))
+    {
+        log << "object_memory_readable=false\n";
+        return;
+    }
+
+    std::vector<std::pair<std::string, uint64_t>> ptrs;
+
+    auto add_ptr = [&](const std::string& label, uint64_t addr)
+    {
+        if (!looks_like_ptr(addr)) return;
+        if (!phase6_mem_readable(reinterpret_cast<void*>(addr), 0x1000)) return;
+        ptrs.push_back({label, addr});
+    };
+
+    // Object-level pointers.
+    for (size_t off = 0; off < 0x420; off += 8)
+    {
+        if (!phase6_mem_readable(base + off, 8)) continue;
+        uint64_t p1 = phase6f_u64(base + off);
+        add_ptr("obj_" + std::to_string(off), p1);
+    }
+
+    // Known important resource-ish roots from previous phases.
+    size_t roots[] = {0x20, 0x80, 0xa0, 0x130, 0x300, 0x310, 0x320, 0x378, 0x380, 0x3d0, 0x3d8};
+
+    for (size_t roff : roots)
+    {
+        if (!phase6_mem_readable(base + roff, 8)) continue;
+
+        uint64_t p1v = phase6f_u64(base + roff);
+        if (!looks_like_ptr(p1v) || !phase6_mem_readable(reinterpret_cast<void*>(p1v), 0x1000)) continue;
+
+        uint8_t* p1 = reinterpret_cast<uint8_t*>(p1v);
+        add_ptr("root_" + std::to_string(roff), p1v);
+
+        // L1 pointers
+        for (size_t off1 = 0; off1 < 0x800; off1 += 8)
+        {
+            if (!phase6_mem_readable(p1 + off1, 8)) continue;
+
+            uint64_t p2v = phase6f_u64(p1 + off1);
+            if (!looks_like_ptr(p2v) || !phase6_mem_readable(reinterpret_cast<void*>(p2v), 0x1000)) continue;
+
+            add_ptr("root_" + std::to_string(roff) + "_l1_" + std::to_string(off1), p2v);
+
+            uint8_t* p2 = reinterpret_cast<uint8_t*>(p2v);
+
+            // L2 pointers, but only first 0x400 to keep output bounded.
+            for (size_t off2 = 0; off2 < 0x400; off2 += 8)
+            {
+                if (!phase6_mem_readable(p2 + off2, 8)) continue;
+
+                uint64_t p3v = phase6f_u64(p2 + off2);
+                if (!looks_like_ptr(p3v) || !phase6_mem_readable(reinterpret_cast<void*>(p3v), 0x1000)) continue;
+
+                add_ptr("root_" + std::to_string(roff) + "_l1_" + std::to_string(off1) + "_l2_" + std::to_string(off2), p3v);
+            }
+        }
+    }
+
+    std::set<uint64_t> seen;
+    int dumped = 0;
+    int scanned = 0;
+
+    size_t dump_sizes[] = {4096, 65536, 262144, 1048576, 4194304};
+
+    for (auto& it : ptrs)
+    {
+        const std::string& label = it.first;
+        uint64_t addr = it.second;
+
+        if (seen.count(addr)) continue;
+        seen.insert(addr);
+
+        uint8_t* p = reinterpret_cast<uint8_t*>(addr);
+
+        phase6f_scan_block(log, label, p, 1048576);
+        scanned++;
+
+        bool has_big_hint = false;
+
+        // Quick scan first 1MB for 2048/16MB/format values.
+        size_t quick_len = 1048576;
+        if (!phase6_mem_readable(p, quick_len)) quick_len = 65536;
+        if (!phase6_mem_readable(p, quick_len)) quick_len = 4096;
+
+        for (size_t off = 0; off + 8 <= quick_len; off += 4)
+        {
+            if (!phase6_mem_readable(p + off, 8)) continue;
+            uint32_t a = phase6f_u32(p + off);
+            uint32_t b = phase6f_u32(p + off + 4);
+            uint64_t q = phase6f_u64(p + off);
+
+            if (a == 2048 || b == 2048 || q == 2048 ||
+                a == 16777216 || b == 16777216 || q == 16777216 ||
+                a == 4194304 || b == 4194304 || q == 4194304 ||
+                a == 16973825 || b == 16973825 || a == 16973827 || b == 16973827)
+            {
+                has_big_hint = true;
+                break;
+            }
+        }
+
+        if (!has_big_hint && dumped > 20) continue;
+
+        for (size_t sz : dump_sizes)
+        {
+            if (!phase6_mem_readable(p, sz)) continue;
+
+            std::string safe = label;
+            for (char& c : safe)
+            {
+                if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
+            }
+
+            std::string fn = prefix + "_phase6f_" + safe + "_" + std::to_string(sz) + ".bin";
+            bool ok = phase6f_dump_file(out / fn, p, sz);
+
+            log << "DUMP label=" << label
+                << " addr=0x" << std::hex << addr << std::dec
+                << " size=" << sz
+                << " file=" << fn
+                << " ok=" << (ok ? 1 : 0)
+                << "\n";
+
+            if (ok) dumped++;
+            if (dumped >= 80) break;
+        }
+
+        if (dumped >= 80 || scanned >= 120) break;
+    }
+
+    log << "\nunique_ptrs=" << seen.size() << "\n";
+    log << "scanned=" << scanned << "\n";
+    log << "dumped=" << dumped << "\n";
+    log << "note=Phase6F aggressive dump. Still no function calls, no ReadPixels, no GPU API.\n";
+
+    file_log("Phase 6F aggressive resource dump " + prefix + " dumped=" + std::to_string(dumped));
+}
+// END PHASE6F_AGGRESSIVE_RESOURCE_DUMP
 
 static void scan_render_targets()
 {
     static bool phase6_done = false;
     if (!phase6_done) { phase6_done = true; phase6_engine_method_discovery(); phase6b_scan_context(); }
-    file_log("Phase 6E scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6E scan_render_targets started\n"));
+    file_log("Phase 6F scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6F scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -1492,6 +1749,7 @@ static void scan_render_targets()
         write_phase6c_vtable_diagnostic(o);
         write_phase6d_raw_candidate_dump(o);
         write_phase6e_small_candidate_dumps(o);
+        write_phase6f_aggressive_resource_dump(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -1539,8 +1797,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 6E scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6E done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 6F scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6F done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -1549,15 +1807,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.3.0");
+        ModVersion = STR("1.4.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.3 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.3 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.4 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.4 on_unreal_init");
     }
 
     auto on_update() -> void override
