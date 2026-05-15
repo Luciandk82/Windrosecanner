@@ -310,10 +310,108 @@ static void write_pixel_export_probe(UObject* o)
     file_log("Phase 4 pixel probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
+
+
+static bool function_name_interesting(const std::string& n)
+{
+    static const std::vector<std::string> tokens = {
+        "RenderTarget",
+        "Resource",
+        "Read",
+        "Pixel",
+        "Surface",
+        "Texture",
+        "Size",
+        "Export",
+        "Construct",
+        "Update",
+        "Resolve"
+    };
+
+    for (const auto& t : tokens)
+    {
+        if (n.find(t) != std::string::npos) return true;
+    }
+
+    return false;
+}
+
+static void write_resource_access_probe(UObject* o)
+{
+    if (!o) return;
+
+    std::string path = obj_path(o);
+    if (!is_map_capture_target(path)) return;
+
+    auto out = out_dir();
+
+    std::string safe_name = obj_name(o);
+    for (char& c : safe_name)
+    {
+        if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
+    }
+
+    std::ofstream f(out / (safe_name + "_resource_probe.txt"), std::ios::app);
+
+    int32_t sx = 0;
+    int32_t sy = 0;
+    read_prop_value<int32_t>(o, STR("SizeX"), sx);
+    read_prop_value<int32_t>(o, STR("SizeY"), sy);
+
+    f << "object=" << path << "\n";
+    f << "class=" << class_name(o) << "\n";
+    f << "SizeX=" << sx << "\n";
+    f << "SizeY=" << sy << "\n";
+    f << "address=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+
+    UObject* source = read_object_prop(o, STR("Source"));
+    UObject* platform = read_object_prop(o, STR("PlatformData"));
+    UObject* resource = read_object_prop(o, STR("Resource"));
+
+    f << "Source=" << obj_path(source) << " class=" << class_name(source) << "\n";
+    f << "PlatformData=" << obj_path(platform) << " class=" << class_name(platform) << "\n";
+    f << "Resource=" << obj_path(resource) << " class=" << class_name(resource) << "\n";
+
+    f << "class_children_interesting:\n";
+
+    try
+    {
+        auto* cls = o->GetClassPrivate();
+        if (cls)
+        {
+            auto* child = cls->GetChildProperties();
+            int prop_count = 0;
+
+            while (child && prop_count < 300)
+            {
+                std::string pn = wide_to_utf8(child->GetName());
+                if (function_name_interesting(pn))
+                {
+                    f << "  PROPERTY " << pn << "\n";
+                }
+
+                child = child->GetNext();
+                prop_count++;
+            }
+
+            f << "property_scan_count=" << prop_count << "\n";
+        }
+    }
+    catch (...)
+    {
+        f << "property_scan_exception\n";
+    }
+
+    f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
+    f << "\n";
+
+    file_log("Phase 5A resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+}
+
 static void scan_render_targets()
 {
-    file_log("Phase 3 scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 3 scan_render_targets started\n"));
+    file_log("Phase 5A scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5A scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -355,6 +453,7 @@ static void scan_render_targets()
         found++;
 
         write_pixel_export_probe(o);
+        write_resource_access_probe(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -402,8 +501,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 3 scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 3 done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 5A scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5A done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -412,15 +511,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.4.0");
+        ModVersion = STR("0.5.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.4 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.4 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.5 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.5 on_unreal_init");
     }
 
     auto on_update() -> void override
