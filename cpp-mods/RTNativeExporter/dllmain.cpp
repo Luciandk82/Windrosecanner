@@ -142,6 +142,35 @@ static bool text_contains_any(const std::string& path)
     return false;
 }
 
+
+static bool text_contains_any(const std::string& path)
+{
+    static const std::vector<std::string> tokens = {
+        "RT_",
+        "Landscape",
+        "Biome",
+        "SubBiome",
+        "DistanceField",
+        "Voronoi",
+        "Map",
+        "Capture",
+        "Fog",
+        "Terrain",
+        "Volum",
+        "Height",
+        "RenderTarget",
+        "Genlandia",
+        "Transient"
+    };
+
+    for (auto& t : tokens)
+    {
+        if (path.find(t) != std::string::npos) return true;
+    }
+
+    return false;
+}
+
 static bool name_contains_target(const std::string& path)
 {
     return text_contains_any(path);
@@ -287,6 +316,7 @@ static void scan_render_targets()
         json << "    \"path\":\"" << json_escape(path) << "\",\n";
         json << "    \"class\":\"" << json_escape(cls) << "\",\n";
         json << "    \"address\":\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\",\n";
+        json << "    \"outer_chain\":\"" << json_escape(outer_chain(o)) << "\",\n";
         json << "    \"outer_chain\":\"" << json_escape(outer_chain(o)) << "\",\n";
 
         write_prop(json, o, "SizeX", STR("SizeX"));
