@@ -378,13 +378,104 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 5A resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 5B resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
+
+
+// BEGIN PHASE5B_NATIVE_MEMORY_PROBE
+static bool mem_readable(const void* a, size_t len)
+{
+    if (!a || len == 0) return false;
+
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(a, &mbi, sizeof(mbi))) return false;
+    if (mbi.State != MEM_COMMIT) return false;
+    if (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) return false;
+
+    auto start = reinterpret_cast<uintptr_t>(a);
+    auto end = start + len;
+    auto region_start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+    auto region_end = region_start + mbi.RegionSize;
+
+    return end >= start && start >= region_start && end <= region_end;
+}
+
+static bool looks_like_ptr(uint64_t v)
+{
+    return v > 0x10000ULL && v < 0x7FFFFFFFFFFFULL;
+}
+
+static void write_native_memory_probe(UObject* o)
+{
+    if (!o) return;
+
+    std::string path = obj_path(o);
+    if (!is_map_capture_target(path)) return;
+
+    std::string safe_name = obj_name(o);
+    for (char& c : safe_name)
+    {
+        if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
+    }
+
+    auto out = out_dir();
+    std::ofstream f(out / (safe_name + "_native_memory_probe.txt"), std::ios::app);
+
+    int32_t sx = 0;
+    int32_t sy = 0;
+    read_prop_value<int32_t>(o, STR("SizeX"), sx);
+    read_prop_value<int32_t>(o, STR("SizeY"), sy);
+
+    f << "object=" << path << "\n";
+    f << "class=" << class_name(o) << "\n";
+    f << "SizeX=" << sx << "\n";
+    f << "SizeY=" << sy << "\n";
+    f << "object_address=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+
+    uint8_t* base = reinterpret_cast<uint8_t*>(o);
+
+    if (!mem_readable(base, 0x400))
+    {
+        f << "object_memory_readable=false\n\n";
+        return;
+    }
+
+    f << "object_memory_readable=true\n";
+
+    uint64_t vtable = 0;
+    if (mem_readable(base, sizeof(uint64_t)))
+    {
+        vtable = *reinterpret_cast<uint64_t*>(base);
+    }
+
+    f << "vtable=0x" << std::hex << vtable << std::dec << "\n";
+    f << "pointer_candidates:\n";
+
+    for (size_t off = 0; off < 0x400; off += 8)
+    {
+        if (!mem_readable(base + off, sizeof(uint64_t))) continue;
+
+        uint64_t val = *reinterpret_cast<uint64_t*>(base + off);
+        if (!looks_like_ptr(val)) continue;
+
+        bool target_readable = mem_readable(reinterpret_cast<void*>(val), 16);
+
+        f << "  off=0x" << std::hex << off
+          << " val=0x" << val
+          << " readable=" << std::dec << (target_readable ? 1 : 0)
+          << "\n";
+    }
+
+    f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
+
+    file_log("Phase 5B native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+}
+// END PHASE5B_NATIVE_MEMORY_PROBE
 
 static void scan_render_targets()
 {
-    file_log("Phase 5A scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5A scan_render_targets started\n"));
+    file_log("Phase 5B scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5B scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -427,6 +518,7 @@ static void scan_render_targets()
 
         write_pixel_export_probe(o);
         write_resource_access_probe(o);
+        write_native_memory_probe(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -474,8 +566,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 5A scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5A done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 5B scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5B done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -484,15 +576,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.5.0");
+        ModVersion = STR("0.6.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.5 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.5 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.6 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.6 on_unreal_init");
     }
 
     auto on_update() -> void override
