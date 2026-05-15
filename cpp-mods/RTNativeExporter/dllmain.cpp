@@ -378,7 +378,7 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 5B resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 5C resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
 
@@ -468,14 +468,119 @@ static void write_native_memory_probe(UObject* o)
 
     f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 5B native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 5C native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5B_NATIVE_MEMORY_PROBE
 
+
+
+// BEGIN PHASE5C_DEEP_POINTER_PROBE
+static void dump_ptr_block(std::ofstream& f, const char* label, uint8_t* base, size_t off)
+{
+    if (!mem_readable(base + off, sizeof(uint64_t))) return;
+
+    uint64_t ptr = *reinterpret_cast<uint64_t*>(base + off);
+
+    f << label << " off=0x" << std::hex << off
+      << " ptr=0x" << ptr
+      << " readable=" << std::dec << (mem_readable(reinterpret_cast<void*>(ptr), 0x100) ? 1 : 0)
+      << "\n";
+
+    if (!looks_like_ptr(ptr)) return;
+    uint8_t* p = reinterpret_cast<uint8_t*>(ptr);
+    if (!mem_readable(p, 0x100)) return;
+
+    f << "  qwords:\n";
+    for (size_t i = 0; i < 0x100; i += 8)
+    {
+        if (!mem_readable(p + i, 8)) continue;
+        uint64_t v = *reinterpret_cast<uint64_t*>(p + i);
+        f << "    +0x" << std::hex << i << " = 0x" << v << std::dec;
+
+        if (v == 2048 || v == 2048ULL)
+        {
+            f << "  <-- 2048";
+        }
+
+        if (v == 4194304 || v == 16777216)
+        {
+            f << "  <-- possible buffer size";
+        }
+
+        f << "\n";
+    }
+
+    f << "  dwords:\n";
+    for (size_t i = 0; i < 0x100; i += 4)
+    {
+        if (!mem_readable(p + i, 4)) continue;
+        uint32_t v = *reinterpret_cast<uint32_t*>(p + i);
+        if (v == 2048 || v == 1024 || v == 512 || v == 256 || v == 4096 || v == 4194304 || v == 16777216)
+        {
+            f << "    +0x" << std::hex << i << " = " << std::dec << v << "  <-- interesting\n";
+        }
+    }
+
+    f << "\n";
+}
+
+static void write_deep_pointer_probe(UObject* o)
+{
+    if (!o) return;
+
+    std::string path = obj_path(o);
+    if (!is_map_capture_target(path)) return;
+
+    std::string safe_name = obj_name(o);
+    for (char& c : safe_name)
+    {
+        if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
+    }
+
+    auto out = out_dir();
+    std::ofstream f(out / (safe_name + "_deep_pointer_probe.txt"), std::ios::app);
+
+    int32_t sx = 0;
+    int32_t sy = 0;
+    read_prop_value<int32_t>(o, STR("SizeX"), sx);
+    read_prop_value<int32_t>(o, STR("SizeY"), sy);
+
+    f << "object=" << path << "\n";
+    f << "class=" << class_name(o) << "\n";
+    f << "SizeX=" << sx << "\n";
+    f << "SizeY=" << sy << "\n";
+    f << "object_address=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+
+    uint8_t* base = reinterpret_cast<uint8_t*>(o);
+    if (!mem_readable(base, 0x500))
+    {
+        f << "object_memory_readable=false\n\n";
+        return;
+    }
+
+    f << "deep_pointer_blocks:\n";
+
+    if (path.find("RT_MapCapture") != std::string::npos)
+    {
+        size_t offs[] = {0x20, 0x50, 0x80, 0xa0, 0x130, 0x300, 0x308, 0x310, 0x320, 0x330, 0x378};
+        for (size_t off : offs) dump_ptr_block(f, "MapCapture", base, off);
+    }
+    else if (path.find("RT_MapFog") != std::string::npos)
+    {
+        size_t offs[] = {0x20, 0x50, 0x80, 0xa0, 0x130, 0x180, 0x188, 0x190, 0x1a0, 0x1b0, 0x300, 0x308, 0x320, 0x330, 0x360, 0x3c0};
+        for (size_t off : offs) dump_ptr_block(f, "MapFog", base, off);
+    }
+
+    f << "note=Phase5C deep pointer probe. No method call and no ReadPixels yet.\n\n";
+
+    file_log("Phase 5C deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+}
+// END PHASE5C_DEEP_POINTER_PROBE
+
 static void scan_render_targets()
 {
-    file_log("Phase 5B scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5B scan_render_targets started\n"));
+    file_log("Phase 5C scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5C scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -519,6 +624,7 @@ static void scan_render_targets()
         write_pixel_export_probe(o);
         write_resource_access_probe(o);
         write_native_memory_probe(o);
+        write_deep_pointer_probe(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -566,8 +672,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 5B scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5B done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 5C scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 5C done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -576,15 +682,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.6.0");
+        ModVersion = STR("0.7.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.6 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.6 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.7 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.7 on_unreal_init");
     }
 
     auto on_update() -> void override
