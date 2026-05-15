@@ -905,7 +905,11 @@ static void phase6b_scan_context()
     f << "Goal: locate actual string addresses inside WindroseServer-Win64-Shipping.exe and dump nearby memory.\n";
     f << "No function calls. No ReadPixels. No GPU access.\n\n";
 
-    HMODULE hExe = GetModuleHandleW(nullptr);
+    HMODULE hExe = GetModuleHandleW(L"WindroseServer-Win64-Shipping.exe");
+    if (!hExe)
+    {
+        hExe = GetModuleHandleW(nullptr);
+    }
     if (!hExe)
     {
         f << "GetModuleHandleW(nullptr) failed\n";
