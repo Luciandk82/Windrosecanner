@@ -264,6 +264,46 @@ static void write_prop(std::ofstream& json, UObject* o, const char* json_name, c
     json << "\n";
 }
 
+
+
+static bool is_map_capture_target(const std::string& path)
+{
+    return path.find("RT_MapCapture") != std::string::npos ||
+           path.find("RT_MapFog") != std::string::npos;
+}
+
+static void write_pixel_export_probe(UObject* o)
+{
+    if (!o) return;
+
+    std::string path = obj_path(o);
+    if (!is_map_capture_target(path)) return;
+
+    auto out = out_dir();
+
+    int32_t sx = 0;
+    int32_t sy = 0;
+    read_prop_value<int32_t>(o, STR("SizeX"), sx);
+    read_prop_value<int32_t>(o, STR("SizeY"), sy);
+
+    std::string safe_name = obj_name(o);
+    for (char& c : safe_name)
+    {
+        if (!(std::isalnum((unsigned char)c) || c == '_' || c == '-')) c = '_';
+    }
+
+    std::ofstream f(out / (safe_name + "_pixel_probe.txt"), std::ios::app);
+    f << "object=" << path << "\n";
+    f << "class=" << class_name(o) << "\n";
+    f << "SizeX=" << sx << "\n";
+    f << "SizeY=" << sy << "\n";
+    f << "address=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+    f << "note=Phase4 confirms candidate for native pixel export. Actual ReadPixels not enabled yet.\n";
+    f << "\n";
+
+    file_log("Phase 4 pixel probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+}
+
 static void scan_render_targets()
 {
     file_log("Phase 3 scan_render_targets started");
@@ -307,6 +347,8 @@ static void scan_render_targets()
         }
 
         found++;
+
+        write_pixel_export_probe(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -364,15 +406,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("0.3.0");
+        ModVersion = STR("0.4.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.3 on_unreal_init\n"));
-        file_log("RTNativeExporter v0.3 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v0.4 on_unreal_init\n"));
+        file_log("RTNativeExporter v0.4 on_unreal_init");
     }
 
     auto on_update() -> void override
