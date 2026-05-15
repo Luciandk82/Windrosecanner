@@ -7,6 +7,7 @@
 #include <Unreal/UClass.hpp>
 #include <Unreal/FProperty.hpp>
 #include <windows.h>
+#include <Psapi.h>
 #include <tlhelp32.h>
 
 #include <fstream>
