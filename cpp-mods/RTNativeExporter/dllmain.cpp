@@ -3306,6 +3306,176 @@ static void write_phase7e_combined_export_strategy(UObject* trigger)
 }
 // END PHASE7E_COMBINED_EXPORT_STRATEGY
 
+
+
+// BEGIN PHASE7F_PIXEL_GRID_SAMPLE
+struct Phase7F_Color
+{
+    uint8_t B;
+    uint8_t G;
+    uint8_t R;
+    uint8_t A;
+};
+
+struct Phase7F_ReadPixel_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    int32_t X;
+    int32_t Y;
+    Phase7F_Color ReturnValue;
+};
+
+static void write_phase7f_pixel_grid_sample(UObject* trigger)
+{
+    static bool done = false;
+    if (done || !trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    done = true;
+
+    auto out = out_dir();
+    std::ofstream log(out / "phase7f_pixel_grid_sample.txt", std::ios::out);
+
+    file_log("Phase 7F pixel grid sample entered");
+
+    log << "Phase 7F pixel grid sample\n";
+    log << "trigger=" << trigger_path << "\n";
+    log << "mode=ReadRenderTargetPixel_grid_32x32_write_csv_and_ppm\n";
+    log << "note=no_large_TArray_no_raw_bin_no_ExportRenderTarget\n\n";
+
+    UObject* default_kismet = nullptr;
+    UObject* rt_map_capture = nullptr;
+    UObject* persistent_level = nullptr;
+    UFunction* read_pixel_fn = nullptr;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string full = obj_path(o);
+            std::string cls = class_name(o);
+
+            if (!default_kismet && full.find("/Script/Engine.Default__KismetRenderingLibrary") != std::string::npos)
+            {
+                default_kismet = o;
+            }
+
+            if (!rt_map_capture && full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture") != std::string::npos)
+            {
+                rt_map_capture = o;
+            }
+
+            if (!persistent_level && cls == "Level" && full.find("PersistentLevel") != std::string::npos && full.find("/Game/Maps/") != std::string::npos)
+            {
+                persistent_level = o;
+            }
+
+            if (!read_pixel_fn && cls == "Function" && full.find("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetPixel") != std::string::npos)
+            {
+                read_pixel_fn = static_cast<UFunction*>(o);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    auto log_obj = [&](const char* label, UObject* o)
+    {
+        log << label << "_found=" << (o ? "true" : "false") << "\n";
+        if (o)
+        {
+            log << label << "_path=" << obj_path(o) << "\n";
+            log << label << "_class=" << class_name(o) << "\n";
+            log << label << "_addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+        }
+    };
+
+    log << "scanned_objects=" << scanned << "\n";
+    log_obj("default_kismet", default_kismet);
+    log_obj("rt_map_capture", rt_map_capture);
+    log_obj("persistent_level", persistent_level);
+    log_obj("read_pixel_fn", reinterpret_cast<UObject*>(read_pixel_fn));
+
+    if (!default_kismet || !rt_map_capture || !read_pixel_fn)
+    {
+        log << "decision=abort_missing_required_objects\n";
+        file_log("Phase 7F aborted missing required objects");
+        return;
+    }
+
+    UObject* world_context = persistent_level ? persistent_level : rt_map_capture;
+
+    constexpr int W = 32;
+    constexpr int H = 32;
+    constexpr int RT_SIZE = 2048;
+
+    std::ofstream csv(out / "phase7f_RT_MapCapture_32x32_pixels.csv", std::ios::out);
+    std::ofstream ppm(out / "phase7f_RT_MapCapture_32x32_preview.ppm", std::ios::out);
+
+    csv << "sample_x,sample_y,rt_x,rt_y,r,g,b,a\n";
+    ppm << "P3\n" << W << " " << H << "\n255\n";
+
+    int non_black = 0;
+    int non_transparent = 0;
+    int calls = 0;
+
+    for (int sy = 0; sy < H; ++sy)
+    {
+        for (int sx = 0; sx < W; ++sx)
+        {
+            int x = static_cast<int>((static_cast<double>(sx) + 0.5) * static_cast<double>(RT_SIZE) / static_cast<double>(W));
+            int y = static_cast<int>((static_cast<double>(sy) + 0.5) * static_cast<double>(RT_SIZE) / static_cast<double>(H));
+
+            Phase7F_ReadPixel_Params params{};
+            params.WorldContextObject = world_context;
+            params.TextureRenderTarget = rt_map_capture;
+            params.X = x;
+            params.Y = y;
+
+            default_kismet->ProcessEvent(read_pixel_fn, &params);
+            calls++;
+
+            int r = static_cast<int>(params.ReturnValue.R);
+            int g = static_cast<int>(params.ReturnValue.G);
+            int b = static_cast<int>(params.ReturnValue.B);
+            int a = static_cast<int>(params.ReturnValue.A);
+
+            if (r != 0 || g != 0 || b != 0) non_black++;
+            if (a != 0) non_transparent++;
+
+            csv << sx << "," << sy << "," << x << "," << y << ","
+                << r << "," << g << "," << b << "," << a << "\n";
+
+            ppm << r << " " << g << " " << b << "\n";
+        }
+    }
+
+    csv.close();
+    ppm.close();
+
+    log << "world_context_path=" << obj_path(world_context) << "\n";
+    log << "grid_width=" << W << "\n";
+    log << "grid_height=" << H << "\n";
+    log << "rt_assumed_size=" << RT_SIZE << "\n";
+    log << "process_event_calls=" << calls << "\n";
+    log << "non_black_samples=" << non_black << "\n";
+    log << "non_transparent_samples=" << non_transparent << "\n";
+    log << "csv_file=phase7f_RT_MapCapture_32x32_pixels.csv\n";
+    log << "ppm_file=phase7f_RT_MapCapture_32x32_preview.ppm\n";
+    log << "result=completed\n";
+
+    file_log("Phase 7F pixel grid sample done calls=" + std::to_string(calls) + " non_black=" + std::to_string(non_black));
+}
+// END PHASE7F_PIXEL_GRID_SAMPLE
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -3365,11 +3535,11 @@ static void scan_render_targets()
             // Phase 7D disabled in v1.9.9. Phase 7E supersedes it.
             // write_phase7d_export_render_target_attempt(o);
 
-            // Delay Phase 7E until later scan attempts so player can log in,
+            // Delay Phase 7F until later scan attempts so player can log in,
             // world can load, and fullscreen map can initialize RT_MapCapture.
             if (attempts >= 8)
             {
-                write_phase7e_combined_export_strategy(o);
+                write_phase7f_pixel_grid_sample(o);
             }
 
             return RC::LoopAction::Continue;
@@ -3386,15 +3556,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.9");
+        ModVersion = STR("1.10.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.9.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.9.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.10.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.10.0.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
