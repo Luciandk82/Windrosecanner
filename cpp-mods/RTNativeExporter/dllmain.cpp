@@ -3740,41 +3740,6 @@ static void write_phase7g_long_sampling_campaign(UObject* trigger, int scan_atte
 
 // BEGIN PHASE8A_LANDSCAPE_HEIGHTMAP_EXTRACTION
 
-static std::string phase8a_safe_string(UObject* o, const char* field_name)
-{
-    try
-    {
-        auto cls = o->GetClass();
-        if (!cls) return "";
-
-        auto prop = cls->FindPropertyByName(field_name);
-        if (!prop) return "";
-
-        return "[property_exists]";
-    }
-    catch (...)
-    {
-        return "[exception]";
-    }
-}
-
-static double phase8a_try_get_double(UObject* o, const char* field_name)
-{
-    try
-    {
-        auto cls = o->GetClass();
-        if (!cls) return -999999.0;
-
-        auto prop = cls->FindPropertyByName(field_name);
-        if (!prop) return -999999.0;
-
-        return 0.0;
-    }
-    catch (...)
-    {
-        return -999999.0;
-    }
-}
 
 static void write_phase8a_landscape_heightmap_extraction(UObject* trigger, int scan_attempt)
 {
@@ -3870,56 +3835,8 @@ static void write_phase8a_landscape_heightmap_extraction(UObject* trigger, int s
                 << "\"" << name << "\","
                 << "\"" << full << "\","
                 << "\"0x" << std::hex << addr << std::dec << "\"\n";
-
-            // -------------------------------------------------------
-            // WindrosePlus-style metadata probing
-            // -------------------------------------------------------
-
-            try
-            {
-                auto cls_obj = o->GetClass();
-
-                if (cls_obj)
-                {
-                    log << "  class_path=" << obj_path(cls_obj) << "\n";
-
-                    const char* props[] = {
-                        "SectionBaseX",
-                        "SectionBaseY",
-                        "ComponentSizeQuads",
-                        "CollisionSizeQuads",
-                        "SubsectionSizeQuads",
-                        "NumSubsections",
-                        "CollisionScale",
-                        "SimpleCollisionSizeQuads",
-                        "CachedLocalBox",
-                        "HeightfieldGuid",
-                        "HeightfieldRef",
-                        "HeightmapTexture",
-                        "RenderTarget",
-                        "LandscapeMaterial",
-                        "LandscapeGuid",
-                        "LandscapeSectionOffset",
-                        "DrawScale",
-                        "RelativeScale3D",
-                        "RelativeLocation"
-                    };
-
-                    for (const char* prop_name : props)
-                    {
-                        auto prop = cls_obj->FindPropertyByName(prop_name);
-
-                        if (prop)
-                        {
-                            log << "  property_found=" << prop_name << "\n";
-                        }
-                    }
-                }
-            }
-            catch (...)
-            {
-                log << "  property_probe_exception=true\n";
-            }
+            log << "  property_probe=disabled_v1.11.1_no_UObject_GetClass_available
+";
 
             log << "\n";
 
@@ -4036,15 +3953,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.11.0");
+        ModVersion = STR("1.11.1");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.11.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.11.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.11.1.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.11.1.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
