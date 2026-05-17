@@ -2984,6 +2984,328 @@ static void write_phase7d_export_render_target_attempt(UObject* trigger)
 }
 // END PHASE7D_EXPORT_RENDER_TARGET_ATTEMPT
 
+
+
+// BEGIN PHASE7E_COMBINED_EXPORT_STRATEGY
+struct Phase7E_FString_Lite
+{
+    wchar_t* Data;
+    int32_t Num;
+    int32_t Max;
+};
+
+struct Phase7E_ExportRenderTarget_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    Phase7E_FString_Lite FilePath;
+    Phase7E_FString_Lite FileName;
+};
+
+struct Phase7E_Color
+{
+    uint8_t B;
+    uint8_t G;
+    uint8_t R;
+    uint8_t A;
+};
+
+struct Phase7E_LinearColor
+{
+    float R;
+    float G;
+    float B;
+    float A;
+};
+
+struct Phase7E_ReadPixel_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    int32_t X;
+    int32_t Y;
+    Phase7E_Color ReturnValue;
+};
+
+struct Phase7E_ReadRawPixel_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    int32_t X;
+    int32_t Y;
+    Phase7E_LinearColor ReturnValue;
+};
+
+static Phase7E_FString_Lite phase7e_make_fstring_lite(std::wstring& value)
+{
+    Phase7E_FString_Lite result{};
+    result.Data = const_cast<wchar_t*>(value.c_str());
+    result.Num = static_cast<int32_t>(value.size() + 1);
+    result.Max = static_cast<int32_t>(value.size() + 1);
+    return result;
+}
+
+static bool phase7e_any_export_exists(const std::filesystem::path& out, const std::string& base)
+{
+    return
+        std::filesystem::exists(out / (base + ".png")) ||
+        std::filesystem::exists(out / (base + ".hdr")) ||
+        std::filesystem::exists(out / (base + ".exr"));
+}
+
+static void write_phase7e_combined_export_strategy(UObject* trigger)
+{
+    static bool done = false;
+    if (done || !trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    done = true;
+
+    auto out = out_dir();
+    std::ofstream log(out / "phase7e_combined_export_strategy.txt", std::ios::out);
+
+    file_log("Phase 7E combined export strategy entered");
+
+    log << "Phase 7E combined controlled runtime invocation test\n";
+    log << "trigger=" << trigger_path << "\n";
+    log << "mode=multi_context_multi_path_ExportRenderTarget_plus_single_pixel_sanity\n";
+    log << "note=no_large_TArray_reads_no_raw_dumps\n\n";
+
+    UObject* default_kismet = nullptr;
+    UObject* rt_map_capture = nullptr;
+    UObject* rt_map_fog = nullptr;
+    UObject* persistent_level = nullptr;
+    UObject* default_world = nullptr;
+    UObject* default_game_instance = nullptr;
+    UObject* default_game_engine = nullptr;
+    UObject* default_game_viewport = nullptr;
+    UObject* default_player_controller = nullptr;
+
+    UFunction* export_fn = nullptr;
+    UFunction* read_pixel_fn = nullptr;
+    UFunction* read_raw_pixel_fn = nullptr;
+    UFunction* read_uv_fn = nullptr;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string full = obj_path(o);
+            std::string cls = class_name(o);
+
+            if (!default_kismet && full.find("/Script/Engine.Default__KismetRenderingLibrary") != std::string::npos) default_kismet = o;
+            if (!rt_map_capture && full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture") != std::string::npos) rt_map_capture = o;
+            if (!rt_map_fog && full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapFog.RT_MapFog") != std::string::npos) rt_map_fog = o;
+            if (!persistent_level && cls == "Level" && full.find("PersistentLevel") != std::string::npos && full.find("/Game/Maps/") != std::string::npos) persistent_level = o;
+            if (!default_world && full.find("/Script/Engine.Default__World") != std::string::npos) default_world = o;
+            if (!default_game_instance && full.find("/Script/Engine.Default__GameInstance") != std::string::npos) default_game_instance = o;
+            if (!default_game_engine && full.find("/Script/Engine.Default__GameEngine") != std::string::npos) default_game_engine = o;
+            if (!default_game_viewport && full.find("/Script/Engine.Default__GameViewportClient") != std::string::npos) default_game_viewport = o;
+            if (!default_player_controller && full.find("/Script/Engine.Default__PlayerController") != std::string::npos) default_player_controller = o;
+
+            if (cls == "Function")
+            {
+                if (!export_fn && full.find("/Script/Engine.KismetRenderingLibrary:ExportRenderTarget") != std::string::npos) export_fn = static_cast<UFunction*>(o);
+                if (!read_pixel_fn && full.find("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetPixel") != std::string::npos) read_pixel_fn = static_cast<UFunction*>(o);
+                if (!read_raw_pixel_fn && full.find("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawPixel") != std::string::npos) read_raw_pixel_fn = static_cast<UFunction*>(o);
+                if (!read_uv_fn && full.find("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetUV") != std::string::npos) read_uv_fn = static_cast<UFunction*>(o);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    log << "scanned_objects=" << scanned << "\n";
+
+    auto log_obj = [&](const char* label, UObject* o)
+    {
+        log << label << "_found=" << (o ? "true" : "false") << "\n";
+        if (o)
+        {
+            log << label << "_path=" << obj_path(o) << "\n";
+            log << label << "_class=" << class_name(o) << "\n";
+            log << label << "_addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+        }
+    };
+
+    log_obj("default_kismet", default_kismet);
+    log_obj("rt_map_capture", rt_map_capture);
+    log_obj("rt_map_fog", rt_map_fog);
+    log_obj("persistent_level", persistent_level);
+    log_obj("default_world", default_world);
+    log_obj("default_game_instance", default_game_instance);
+    log_obj("default_game_engine", default_game_engine);
+    log_obj("default_game_viewport", default_game_viewport);
+    log_obj("default_player_controller", default_player_controller);
+    log_obj("export_fn", reinterpret_cast<UObject*>(export_fn));
+    log_obj("read_pixel_fn", reinterpret_cast<UObject*>(read_pixel_fn));
+    log_obj("read_raw_pixel_fn", reinterpret_cast<UObject*>(read_raw_pixel_fn));
+    log_obj("read_uv_fn", reinterpret_cast<UObject*>(read_uv_fn));
+
+    if (!default_kismet || !rt_map_capture || !export_fn)
+    {
+        log << "decision=abort_missing_required_export_objects\n";
+        file_log("Phase 7E aborted missing required export objects");
+        return;
+    }
+
+    struct ContextCandidate
+    {
+        const char* label;
+        UObject* object;
+    };
+
+    ContextCandidate contexts[] = {
+        {"persistent_level", persistent_level},
+        {"rt_map_capture_self", rt_map_capture},
+        {"default_world", default_world},
+        {"default_game_instance", default_game_instance},
+        {"default_game_engine", default_game_engine},
+        {"default_game_viewport", default_game_viewport},
+        {"default_player_controller", default_player_controller},
+        {"default_kismet_self", default_kismet}
+    };
+
+    struct PathCandidate
+    {
+        const char* label;
+        const wchar_t* file_path;
+        bool append_extension_in_name;
+    };
+
+    PathCandidate paths[] = {
+        {"wine_z_absolute_no_ext", L"Z:/home/pirat_king/windrose-server/R5/Binaries/Win64/windrose_plus_data/native_rt_export", false},
+        {"wine_z_absolute_png_name", L"Z:/home/pirat_king/windrose-server/R5/Binaries/Win64/windrose_plus_data/native_rt_export", true},
+        {"linux_absolute_no_ext", L"/home/pirat_king/windrose-server/R5/Binaries/Win64/windrose_plus_data/native_rt_export", false},
+        {"relative_no_ext", L"windrose_plus_data/native_rt_export", false}
+    };
+
+    int export_attempts = 0;
+    int export_successes = 0;
+
+    for (const auto& ctx : contexts)
+    {
+        if (!ctx.object) continue;
+
+        for (const auto& path_candidate : paths)
+        {
+            export_attempts++;
+
+            std::string base_name =
+                std::string("phase7e_RT_MapCapture_") +
+                ctx.label + "_" +
+                path_candidate.label;
+
+            std::wstring w_path(path_candidate.file_path);
+            std::wstring w_name(base_name.begin(), base_name.end());
+
+            if (path_candidate.append_extension_in_name)
+            {
+                w_name += L".png";
+            }
+
+            Phase7E_ExportRenderTarget_Params params{};
+            params.WorldContextObject = ctx.object;
+            params.TextureRenderTarget = rt_map_capture;
+            params.FilePath = phase7e_make_fstring_lite(w_path);
+            params.FileName = phase7e_make_fstring_lite(w_name);
+
+            log << "\nEXPORT_ATTEMPT[" << export_attempts << "]\n";
+            log << "  context_label=" << ctx.label << "\n";
+            log << "  context_path=" << obj_path(ctx.object) << "\n";
+            log << "  path_label=" << path_candidate.label << "\n";
+            log << "  base_name=" << base_name << "\n";
+            log << "  about_to_call_ProcessEvent=true\n";
+            log.flush();
+
+            default_kismet->ProcessEvent(export_fn, &params);
+
+            log << "  after_ProcessEvent=true\n";
+
+            bool exists_no_ext = phase7e_any_export_exists(out, base_name);
+            bool exists_png_name_png = phase7e_any_export_exists(out, base_name + ".png");
+
+            log << "  exists_base_png_hdr_exr=" << (exists_no_ext ? "true" : "false") << "\n";
+            log << "  exists_pngname_png_hdr_exr=" << (exists_png_name_png ? "true" : "false") << "\n";
+
+            if (exists_no_ext || exists_png_name_png)
+            {
+                export_successes++;
+                log << "  result=success_file_detected\n";
+            }
+            else
+            {
+                log << "  result=no_file_detected\n";
+            }
+        }
+    }
+
+    log << "\nPIXEL_SANITY_TESTS\n";
+
+    UObject* pixel_context = persistent_level ? persistent_level : rt_map_capture;
+
+    if (read_pixel_fn && pixel_context)
+    {
+        Phase7E_ReadPixel_Params p0{};
+        p0.WorldContextObject = pixel_context;
+        p0.TextureRenderTarget = rt_map_capture;
+        p0.X = 1024;
+        p0.Y = 1024;
+
+        log << "ReadRenderTargetPixel about_to_call_ProcessEvent=true\n";
+        log.flush();
+        default_kismet->ProcessEvent(read_pixel_fn, &p0);
+        log << "ReadRenderTargetPixel after_ProcessEvent=true\n";
+        log << "ReadRenderTargetPixel ReturnValue RGBA="
+            << static_cast<int>(p0.ReturnValue.R) << ","
+            << static_cast<int>(p0.ReturnValue.G) << ","
+            << static_cast<int>(p0.ReturnValue.B) << ","
+            << static_cast<int>(p0.ReturnValue.A) << "\n";
+    }
+    else
+    {
+        log << "ReadRenderTargetPixel skipped_missing_function_or_context\n";
+    }
+
+    if (read_raw_pixel_fn && pixel_context)
+    {
+        Phase7E_ReadRawPixel_Params p1{};
+        p1.WorldContextObject = pixel_context;
+        p1.TextureRenderTarget = rt_map_capture;
+        p1.X = 1024;
+        p1.Y = 1024;
+
+        log << "ReadRenderTargetRawPixel about_to_call_ProcessEvent=true\n";
+        log.flush();
+        default_kismet->ProcessEvent(read_raw_pixel_fn, &p1);
+        log << "ReadRenderTargetRawPixel after_ProcessEvent=true\n";
+        log << "ReadRenderTargetRawPixel ReturnValue RGBA="
+            << p1.ReturnValue.R << ","
+            << p1.ReturnValue.G << ","
+            << p1.ReturnValue.B << ","
+            << p1.ReturnValue.A << "\n";
+    }
+    else
+    {
+        log << "ReadRenderTargetRawPixel skipped_missing_function_or_context\n";
+    }
+
+    log << "\nSUMMARY\n";
+    log << "export_attempts=" << export_attempts << "\n";
+    log << "export_successes=" << export_successes << "\n";
+    log << "note=Phase 7E combined test completed. If any files exist, upload them with this log.\n";
+
+    file_log("Phase 7E combined export strategy done attempts=" + std::to_string(export_attempts) + " successes=" + std::to_string(export_successes));
+}
+// END PHASE7E_COMBINED_EXPORT_STRATEGY
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -3041,6 +3363,7 @@ static void scan_render_targets()
             write_phase7b_ufunction_signature_dump(o);
             write_phase7c1_context_object_discovery(o);
             write_phase7d_export_render_target_attempt(o);
+            write_phase7e_combined_export_strategy(o);
 
             return RC::LoopAction::Continue;
         }
@@ -3056,15 +3379,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.7");
+        ModVersion = STR("1.9.8");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.7.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.7.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.8.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.8.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
