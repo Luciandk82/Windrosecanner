@@ -2491,71 +2491,35 @@ static void write_phase7a_ue_runtime_readback_discovery(UObject* trigger)
 
 
 
-// BEGIN PHASE7B_UFUNCTION_SIGNATURE_DUMP
-static const char* phase7b_signature_hint(const std::string& full)
-{
-    if (full.find(":ExportRenderTarget") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, FilePath, FileName) -> void";
-    if (full.find(":ReadRenderTargetRawPixelArea") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, MinX, MinY, MaxX, MaxY) -> LinearColor[]";
-    if (full.find(":ReadRenderTargetRawPixel") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, X, Y) -> LinearColor";
-    if (full.find(":ReadRenderTargetRaw") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget) -> LinearColor[]";
-    if (full.find(":ReadRenderTargetPixel") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, X, Y) -> Color";
-    if (full.find(":ReadRenderTarget") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget) -> Color[]";
-    if (full.find(":ReadRenderTargetUVArea") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, MinU, MinV, MaxU, MaxV) -> Color[]";
-    if (full.find(":ReadRenderTargetUV") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, U, V) -> Color";
-    if (full.find(":BeginDrawCanvasToRenderTarget") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, Canvas, Size, Context) -> void";
-    if (full.find(":EndDrawCanvasToRenderTarget") != std::string::npos)
-        return "expected_hint=(WorldContextObject, Context) -> void";
-    if (full.find(":DrawMaterialToRenderTarget") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, Material) -> void";
-    if (full.find(":ClearRenderTarget2D") != std::string::npos)
-        return "expected_hint=(WorldContextObject, TextureRenderTarget, ClearColor) -> void";
-    return "expected_hint=unknown";
-}
 
+
+
+// BEGIN PHASE7B_UFUNCTION_SIGNATURE_DUMP
 static bool phase7b_is_target_function(const std::string& full)
 {
     const char* targets[] = {
-        "/Script/Engine.KismetRenderingLibrary:ExportRenderTarget",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTarget",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetPixel",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRaw",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawPixel",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawPixelArea",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawUV",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawUVArea",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetUV",
-        "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetUVArea",
-        "/Script/Engine.KismetRenderingLibrary:BeginDrawCanvasToRenderTarget",
-        "/Script/Engine.KismetRenderingLibrary:EndDrawCanvasToRenderTarget",
-        "/Script/Engine.KismetRenderingLibrary:DrawMaterialToRenderTarget",
-        "/Script/Engine.KismetRenderingLibrary:ClearRenderTarget2D"
+        "KismetRenderingLibrary:ExportRenderTarget",
+        "KismetRenderingLibrary:ReadRenderTarget",
+        "KismetRenderingLibrary:ReadRenderTargetPixel",
+        "KismetRenderingLibrary:ReadRenderTargetRaw",
+        "KismetRenderingLibrary:ReadRenderTargetRawPixel",
+        "KismetRenderingLibrary:ReadRenderTargetRawPixelArea",
+        "KismetRenderingLibrary:ReadRenderTargetRawUV",
+        "KismetRenderingLibrary:ReadRenderTargetRawUVArea",
+        "KismetRenderingLibrary:ReadRenderTargetUV",
+        "KismetRenderingLibrary:ReadRenderTargetUVArea",
+        "KismetRenderingLibrary:BeginDrawCanvasToRenderTarget",
+        "KismetRenderingLibrary:EndDrawCanvasToRenderTarget",
+        "KismetRenderingLibrary:DrawMaterialToRenderTarget",
+        "KismetRenderingLibrary:ClearRenderTarget2D"
     };
 
     for (const char* t : targets)
     {
-        if (full.find(t) != std::string::npos)
-        {
-            return true;
-        }
+        if (full.find(t) != std::string::npos) return true;
     }
 
     return false;
-}
-
-static void phase7b_write_uobject_memory_preview(std::ofstream& log, UObject* o)
-{
-    if (!o) return;
-    log << "  memory_preview_256=disabled_in_v1.9.1_due_to_MSVC_C2712_SEH_unwind_rule
-";
 }
 
 static void write_phase7b_ufunction_signature_dump(UObject* trigger)
@@ -2573,21 +2537,17 @@ static void write_phase7b_ufunction_signature_dump(UObject* trigger)
 
     file_log("Phase 7B UFunction signature dump entered");
 
-    log << "Phase 7B UFunction parameter/signature dump\n";
+    log << "Phase 7B UFunction signature dump\n";
     log << "trigger=" << path << "\n";
     log << "mode=discovery_only_no_ProcessEvent_no_GPU_no_ReadPixels\n\n";
 
     int scanned = 0;
     int target_functions = 0;
-    int target_objects = 0;
 
     RC::Unreal::UObjectGlobals::ForEachUObject(
         [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
         {
-            if (!o)
-            {
-                return RC::LoopAction::Continue;
-            }
+            if (!o) return RC::LoopAction::Continue;
 
             scanned++;
 
@@ -2595,83 +2555,35 @@ static void write_phase7b_ufunction_signature_dump(UObject* trigger)
             std::string full = obj_path(o);
             std::string cls = class_name(o);
 
-            bool is_function = (cls == "Function");
-            bool is_target_function = is_function && phase7b_is_target_function(full);
+            if (cls != "Function") return RC::LoopAction::Continue;
+            if (!phase7b_is_target_function(full)) return RC::LoopAction::Continue;
 
-            bool is_target_object =
-                full.find("/Script/Engine.Default__KismetRenderingLibrary") != std::string::npos ||
-                full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture") != std::string::npos ||
-                full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapFog.RT_MapFog") != std::string::npos ||
-                full.find("/R5TerrainGeneratorAPI/Volumization/RT_LandscapeTable.RT_LandscapeTable") != std::string::npos ||
-                full.find("/R5TerrainGeneratorAPI/Volumization/RT_LandscapeHeights.RT_LandscapeHeights") != std::string::npos ||
-                full.find("/R5TerrainGeneratorAPI/Volumization/RT_Biomes.RT_Biomes") != std::string::npos ||
-                full.find("/R5TerrainGeneratorAPI/Volumization/RT_SubBiomes.RT_SubBiomes") != std::string::npos ||
-                full.find("/R5TerrainGeneratorAPI/Volumization/RT_BiomeDistanceFields.RT_BiomeDistanceFields") != std::string::npos;
+            target_functions++;
 
-            if (!is_target_function && !is_target_object)
-            {
-                return RC::LoopAction::Continue;
-            }
+            log << "FUNCTION[" << target_functions << "]\n";
+            log << "  name=" << name << "\n";
+            log << "  path=" << full << "\n";
+            log << "  class=" << cls << "\n";
+            log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
 
-            if (is_target_function)
-            {
-                target_functions++;
+            auto* fn = static_cast<UFunction*>(o);
+            uint32_t flags = static_cast<uint32_t>(fn->GetFunctionFlags());
 
-                log << "FUNCTION[" << target_functions << "]\n";
-                log << "  name=" << name << "\n";
-                log << "  path=" << full << "\n";
-                log << "  class=" << cls << "\n";
-                log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+            log << "  function_flags_dec=" << flags << "\n";
+            log << "  function_flags_hex=0x" << std::hex << flags << std::dec << "\n";
+            log << "  note=Phase 7B intentionally does not traverse FProperty/FField yet.\n";
+            log << "\n";
 
-                auto* fn = static_cast<UFunction*>(o);
-
-                __try
-                {
-                    uint32_t flags = static_cast<uint32_t>(fn->GetFunctionFlags());
-                    log << "  function_flags_dec=" << flags << "\n";
-                    log << "  function_flags_hex=0x" << std::hex << flags << std::dec << "\n";
-                }
-                __except(EXCEPTION_EXECUTE_HANDLER)
-                {
-                    log << "  function_flags=EXCEPTION\n";
-                }
-
-                log << "  " << phase7b_signature_hint(full) << "\n";
-                log << "  param_metadata_note=FProperty/FField chain not called in 7B to avoid unsafe private-header traversal.\n";
-                log << "  next_step=Use this function path + flags to build Phase 7C controlled ProcessEvent param struct.\n";
-
-                phase7b_write_uobject_memory_preview(log, o);
-                log << "\n";
-            }
-
-            if (is_target_object)
-            {
-                target_objects++;
-
-                log << "OBJECT[" << target_objects << "]\n";
-                log << "  name=" << name << "\n";
-                log << "  path=" << full << "\n";
-                log << "  class=" << cls << "\n";
-                log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
-                phase7b_write_uobject_memory_preview(log, o);
-                log << "\n";
-            }
-
-            if (target_functions >= 64 && target_objects >= 16)
-            {
-                return RC::LoopAction::Break;
-            }
-
+            if (target_functions >= 64) return RC::LoopAction::Break;
             return RC::LoopAction::Continue;
         }
     );
 
     log << "scanned_objects=" << scanned << "\n";
     log << "target_functions=" << target_functions << "\n";
-    log << "target_objects=" << target_objects << "\n";
-    log << "note=Phase 7B is metadata/signature discovery only. No ProcessEvent calls, no GPU API, no ReadPixels.\n";
+    log << "note=Phase 7B is metadata discovery only. No ProcessEvent calls.\n";
 
-    file_log("Phase 7B UFunction signature dump done functions=" + std::to_string(target_functions) + " objects=" + std::to_string(target_objects));
+    file_log("Phase 7B UFunction signature dump done functions=" + std::to_string(target_functions));
 }
 // END PHASE7B_UFUNCTION_SIGNATURE_DUMP
 
@@ -2790,15 +2702,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.1");
+        ModVersion = STR("1.9.2");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.1.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.1.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.2.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.2.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
