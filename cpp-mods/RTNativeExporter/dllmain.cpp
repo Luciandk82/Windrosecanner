@@ -3870,6 +3870,352 @@ static void write_phase8a_landscape_heightmap_extraction(UObject* trigger, int s
 
 // END PHASE8A_LANDSCAPE_HEIGHTMAP_EXTRACTION
 
+
+
+// BEGIN PHASE8B_TARGETED_LANDSCAPE_RUNTIME_INDEX
+static std::string phase8b_json_escape(const std::string& input)
+{
+    std::string out;
+    out.reserve(input.size() + 16);
+
+    for (char c : input)
+    {
+        switch (c)
+        {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c; break;
+        }
+    }
+
+    return out;
+}
+
+static std::string phase8b_parent_before_colon_or_dot(const std::string& path)
+{
+    size_t colon = path.find(':');
+    if (colon != std::string::npos)
+    {
+        return path.substr(0, colon);
+    }
+
+    size_t dot = path.rfind('.');
+    if (dot != std::string::npos)
+    {
+        return path.substr(0, dot);
+    }
+
+    return path;
+}
+
+static int phase8b_extract_last_int_after_token(const std::string& s, const std::string& token)
+{
+    size_t pos = s.rfind(token);
+    if (pos == std::string::npos)
+    {
+        return -1;
+    }
+
+    pos += token.size();
+
+    std::string digits;
+    while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9')
+    {
+        digits.push_back(s[pos]);
+        pos++;
+    }
+
+    if (digits.empty())
+    {
+        return -1;
+    }
+
+    try
+    {
+        return std::stoi(digits);
+    }
+    catch (...)
+    {
+        return -1;
+    }
+}
+
+static void write_phase8b_targeted_landscape_runtime_index(UObject* trigger, int scan_attempt)
+{
+    static bool done = false;
+    if (done || !trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    if (scan_attempt < 12) return;
+
+    done = true;
+
+    auto out = out_dir();
+
+    std::ofstream log(out / "phase8b_targeted_landscape_runtime_index.txt", std::ios::out);
+    std::ofstream csv(out / "phase8b_runtime_landscape_components.csv", std::ios::out);
+    std::ofstream jsonl(out / "phase8b_runtime_landscape_components.jsonl", std::ios::out);
+
+    file_log("Phase 8B targeted landscape runtime index entered");
+
+    log << "Phase 8B targeted landscape runtime index\n";
+    log << "mode=runtime_PersistentLevel_landscape_components_only\n";
+    log << "goal=index_real_runtime_landscape_collision_and_render_components_for_heightmap_exporter_track\n";
+    log << "note=no_raw_memory_height_dumps_yet\n\n";
+
+    csv << "kind,class,name,path,parent,addr,landscape_id,component_id,is_runtime_persistent,is_default_object\n";
+
+    struct Rec
+    {
+        std::string kind;
+        std::string cls;
+        std::string name;
+        std::string path;
+        std::string parent;
+        uintptr_t addr;
+        int landscape_id;
+        int component_id;
+        bool is_runtime_persistent;
+        bool is_default_object;
+    };
+
+    std::vector<Rec> records;
+
+    int scanned = 0;
+    int runtime_collision = 0;
+    int runtime_landscape_component = 0;
+    int runtime_landscape_actor = 0;
+    int runtime_scene_component = 0;
+    int runtime_other_landscape = 0;
+    int default_skipped = 0;
+    int class_skipped = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool is_default = path.find("Default__") != std::string::npos;
+            bool is_class = cls == "Class" || cls == "ScriptStruct" || cls == "Enum" || cls == "Function" || cls == "Package";
+            bool is_runtime_persistent = path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                                         path.find("PersistentLevel") != std::string::npos;
+
+            bool landscape_related =
+                cls.find("Landscape") != std::string::npos ||
+                name.find("Landscape") != std::string::npos ||
+                path.find("Landscape") != std::string::npos;
+
+            if (!landscape_related)
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            if (is_default)
+            {
+                default_skipped++;
+                return RC::LoopAction::Continue;
+            }
+
+            if (is_class)
+            {
+                class_skipped++;
+                return RC::LoopAction::Continue;
+            }
+
+            if (!is_runtime_persistent)
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            std::string kind = "other_landscape";
+            if (cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos)
+            {
+                kind = "collision";
+                runtime_collision++;
+            }
+            else if (cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos)
+            {
+                kind = "landscape_component";
+                runtime_landscape_component++;
+            }
+            else if (cls == "Landscape" || cls == "LandscapeStreamingProxy" || cls == "LandscapeProxy")
+            {
+                kind = "landscape_actor";
+                runtime_landscape_actor++;
+            }
+            else if (cls == "SceneComponent")
+            {
+                kind = "scene_component";
+                runtime_scene_component++;
+            }
+            else
+            {
+                runtime_other_landscape++;
+            }
+
+            int landscape_id = phase8b_extract_last_int_after_token(path, "Landscape_");
+            int component_id = phase8b_extract_last_int_after_token(path, "LandscapeComponent_");
+            if (component_id < 0)
+            {
+                component_id = phase8b_extract_last_int_after_token(path, "CollisionComponent_");
+            }
+
+            Rec r{};
+            r.kind = kind;
+            r.cls = cls;
+            r.name = name;
+            r.path = path;
+            r.parent = phase8b_parent_before_colon_or_dot(path);
+            r.addr = reinterpret_cast<uintptr_t>(o);
+            r.landscape_id = landscape_id;
+            r.component_id = component_id;
+            r.is_runtime_persistent = is_runtime_persistent;
+            r.is_default_object = is_default;
+
+            records.push_back(r);
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(records.begin(), records.end(), [](const Rec& a, const Rec& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        if (a.component_id != b.component_id) return a.component_id < b.component_id;
+        if (a.kind != b.kind) return a.kind < b.kind;
+        return a.path < b.path;
+    });
+
+    int min_landscape_id = 999999999;
+    int max_landscape_id = -1;
+    int min_component_id = 999999999;
+    int max_component_id = -1;
+
+    std::map<int, int> landscape_counts;
+    std::map<std::string, int> kind_counts;
+    std::map<int, int> component_id_counts;
+
+    for (const auto& r : records)
+    {
+        if (r.landscape_id >= 0)
+        {
+            min_landscape_id = std::min(min_landscape_id, r.landscape_id);
+            max_landscape_id = std::max(max_landscape_id, r.landscape_id);
+            landscape_counts[r.landscape_id]++;
+        }
+
+        if (r.component_id >= 0)
+        {
+            min_component_id = std::min(min_component_id, r.component_id);
+            max_component_id = std::max(max_component_id, r.component_id);
+            component_id_counts[r.component_id]++;
+        }
+
+        kind_counts[r.kind]++;
+
+        csv << "\"" << r.kind << "\","
+            << "\"" << r.cls << "\","
+            << "\"" << r.name << "\","
+            << "\"" << r.path << "\","
+            << "\"" << r.parent << "\","
+            << "\"0x" << std::hex << r.addr << std::dec << "\","
+            << r.landscape_id << ","
+            << r.component_id << ","
+            << (r.is_runtime_persistent ? "true" : "false") << ","
+            << (r.is_default_object ? "true" : "false") << "\n";
+
+        jsonl << "{"
+              << "\"kind\":\"" << phase8b_json_escape(r.kind) << "\","
+              << "\"class\":\"" << phase8b_json_escape(r.cls) << "\","
+              << "\"name\":\"" << phase8b_json_escape(r.name) << "\","
+              << "\"path\":\"" << phase8b_json_escape(r.path) << "\","
+              << "\"parent\":\"" << phase8b_json_escape(r.parent) << "\","
+              << "\"addr\":\"0x" << std::hex << r.addr << std::dec << "\","
+              << "\"landscape_id\":" << r.landscape_id << ","
+              << "\"component_id\":" << r.component_id << ","
+              << "\"is_runtime_persistent\":" << (r.is_runtime_persistent ? "true" : "false") << ","
+              << "\"is_default_object\":" << (r.is_default_object ? "true" : "false")
+              << "}\n";
+    }
+
+    log << "SUMMARY\n";
+    log << "  scanned_objects=" << scanned << "\n";
+    log << "  runtime_records=" << records.size() << "\n";
+    log << "  runtime_collision=" << runtime_collision << "\n";
+    log << "  runtime_landscape_component=" << runtime_landscape_component << "\n";
+    log << "  runtime_landscape_actor=" << runtime_landscape_actor << "\n";
+    log << "  runtime_scene_component=" << runtime_scene_component << "\n";
+    log << "  runtime_other_landscape=" << runtime_other_landscape << "\n";
+    log << "  default_skipped=" << default_skipped << "\n";
+    log << "  class_skipped=" << class_skipped << "\n";
+
+    if (min_landscape_id != 999999999)
+    {
+        log << "  landscape_id_min=" << min_landscape_id << "\n";
+        log << "  landscape_id_max=" << max_landscape_id << "\n";
+        log << "  unique_landscape_ids=" << landscape_counts.size() << "\n";
+    }
+
+    if (min_component_id != 999999999)
+    {
+        log << "  component_id_min=" << min_component_id << "\n";
+        log << "  component_id_max=" << max_component_id << "\n";
+        log << "  unique_component_ids=" << component_id_counts.size() << "\n";
+    }
+
+    log << "\nKIND_COUNTS\n";
+    for (const auto& kv : kind_counts)
+    {
+        log << "  " << kv.first << "=" << kv.second << "\n";
+    }
+
+    log << "\nLANDSCAPE_COUNTS_TOP\n";
+    int shown = 0;
+    for (const auto& kv : landscape_counts)
+    {
+        log << "  Landscape_" << kv.first << "=" << kv.second << "\n";
+        shown++;
+        if (shown >= 80) break;
+    }
+
+    log << "\nSAMPLE_RECORDS_FIRST_80\n";
+    int sample_count = 0;
+    for (const auto& r : records)
+    {
+        log << "RECORD\n";
+        log << "  kind=" << r.kind << "\n";
+        log << "  class=" << r.cls << "\n";
+        log << "  name=" << r.name << "\n";
+        log << "  path=" << r.path << "\n";
+        log << "  parent=" << r.parent << "\n";
+        log << "  addr=0x" << std::hex << r.addr << std::dec << "\n";
+        log << "  landscape_id=" << r.landscape_id << "\n";
+        log << "  component_id=" << r.component_id << "\n\n";
+
+        sample_count++;
+        if (sample_count >= 80) break;
+    }
+
+    log << "OUTPUTS\n";
+    log << "  csv=phase8b_runtime_landscape_components.csv\n";
+    log << "  jsonl=phase8b_runtime_landscape_components.jsonl\n";
+    log << "  txt=phase8b_targeted_landscape_runtime_index.txt\n";
+
+    file_log("Phase 8B done records=" + std::to_string(records.size()) + " collisions=" + std::to_string(runtime_collision));
+}
+// END PHASE8B_TARGETED_LANDSCAPE_RUNTIME_INDEX
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -3935,7 +4281,8 @@ static void scan_render_targets()
             {
                 // disabled v1.10.1: write_phase7f_pixel_grid_sample(o);
                 // disabled v1.11.0: write_phase7g_long_sampling_campaign(o, attempts);
-                write_phase8a_landscape_heightmap_extraction(o, attempts);
+                // disabled v1.12.0: write_phase8a_landscape_heightmap_extraction(o, attempts);
+                write_phase8b_targeted_landscape_runtime_index(o, attempts);
             }
 
             return RC::LoopAction::Continue;
@@ -3952,15 +4299,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.11.2");
+        ModVersion = STR("1.12.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.11.2.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.11.2.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.12.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.12.0.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
