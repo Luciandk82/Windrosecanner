@@ -4216,6 +4216,382 @@ static void write_phase8b_targeted_landscape_runtime_index(UObject* trigger, int
 }
 // END PHASE8B_TARGETED_LANDSCAPE_RUNTIME_INDEX
 
+
+
+// BEGIN PHASE8C_COMPONENT_LAYOUT_AND_TINY_RAW_PROBES
+static uint64_t phase8c_fnv1a64(const uint8_t* data, size_t len)
+{
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < len; ++i)
+    {
+        h ^= static_cast<uint64_t>(data[i]);
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static bool phase8c_is_probably_readable_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static int32_t phase8c_read_i32_unchecked(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uint32_t phase8c_read_u32_unchecked(uint8_t* base, size_t off)
+{
+    uint32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase8c_read_ptr_unchecked(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static void phase8c_dump_tiny_window(std::ofstream& rawlog, const char* label, UObject* o, size_t base_off, size_t len)
+{
+    if (!o) return;
+
+    uint8_t* base = reinterpret_cast<uint8_t*>(o);
+    uint8_t buf[256]{};
+
+    if (len > sizeof(buf)) len = sizeof(buf);
+
+    std::memcpy(buf, base + base_off, len);
+
+    uint8_t minv = 255;
+    uint8_t maxv = 0;
+    uint64_t sum = 0;
+
+    for (size_t i = 0; i < len; ++i)
+    {
+        minv = std::min(minv, buf[i]);
+        maxv = std::max(maxv, buf[i]);
+        sum += buf[i];
+    }
+
+    rawlog << "RAW_WINDOW label=" << label
+           << " object=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec
+           << " offset=" << base_off
+           << " len=" << len
+           << " min=" << static_cast<int>(minv)
+           << " max=" << static_cast<int>(maxv)
+           << " avg=" << (len ? (double)sum / (double)len : 0.0)
+           << " fnv64=0x" << std::hex << phase8c_fnv1a64(buf, len) << std::dec
+           << "\n";
+
+    rawlog << "  hex=";
+    for (size_t i = 0; i < len && i < 96; ++i)
+    {
+        rawlog << std::hex;
+        int v = static_cast<int>(buf[i]);
+        if (v < 16) rawlog << "0";
+        rawlog << v;
+        if (i + 1 < len && i + 1 < 96) rawlog << " ";
+    }
+    rawlog << std::dec << "\n";
+
+    rawlog << "  u16_first32=";
+    for (size_t i = 0; i + 1 < len && i < 64; i += 2)
+    {
+        uint16_t v = 0;
+        std::memcpy(&v, buf + i, sizeof(v));
+        rawlog << v;
+        if (i + 2 < len && i + 2 < 64) rawlog << ",";
+    }
+    rawlog << "\n";
+}
+
+static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger, int scan_attempt)
+{
+    static bool done = false;
+    if (done || !trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    if (scan_attempt < 14) return;
+
+    done = true;
+
+    auto out = out_dir();
+
+    std::ofstream log(out / "phase8c_component_layout_and_tiny_raw_probes.txt", std::ios::out);
+    std::ofstream csv(out / "phase8c_component_layout_candidates.csv", std::ios::out);
+    std::ofstream rawlog(out / "phase8c_tiny_raw_probe_windows.txt", std::ios::out);
+
+    file_log("Phase 8C component layout and tiny raw probes entered");
+
+    log << "Phase 8C component layout + tiny raw probes\n";
+    log << "mode=targeted_runtime_landscape_metadata_and_small_memory_windows\n";
+    log << "goal=find_sectionbase_component_size_candidate_offsets_and_initial_height_raw_signal\n";
+    log << "safety=max_8_objects_small_windows_no_full_height_dump\n\n";
+
+    csv << "kind,class,name,path,addr,landscape_id,component_id,"
+           "candidate_sectionbase_count,candidate_size_count,candidate_ptr_count,"
+           "sample_i32_offsets,sample_size_offsets,sample_ptr_offsets\n";
+
+    struct Rec
+    {
+        std::string kind;
+        std::string cls;
+        std::string name;
+        std::string path;
+        uintptr_t addr;
+        int landscape_id;
+        int component_id;
+        UObject* obj;
+    };
+
+    std::vector<Rec> collisions;
+    std::vector<Rec> components;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool is_runtime_persistent =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!is_runtime_persistent) return RC::LoopAction::Continue;
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
+
+            bool is_collision = cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            bool is_component = (cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos);
+
+            if (!is_collision && !is_component) return RC::LoopAction::Continue;
+
+            auto extract_int_after = [](const std::string& text, const std::string& token) -> int
+            {
+                size_t pos = text.rfind(token);
+                if (pos == std::string::npos) return -1;
+                pos += token.size();
+                std::string digits;
+                while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+                {
+                    digits.push_back(text[pos]);
+                    pos++;
+                }
+                if (digits.empty()) return -1;
+                try { return std::stoi(digits); } catch (...) { return -1; }
+            };
+
+            Rec r{};
+            r.kind = is_collision ? "collision" : "landscape_component";
+            r.cls = cls;
+            r.name = name;
+            r.path = path;
+            r.addr = reinterpret_cast<uintptr_t>(o);
+            r.landscape_id = extract_int_after(path, "Landscape_");
+            r.component_id = extract_int_after(path, is_collision ? "LandscapeHeightfieldCollisionComponent_" : "LandscapeComponent_");
+            r.obj = o;
+
+            if (is_collision) collisions.push_back(r);
+            if (is_component) components.push_back(r);
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    auto by_landscape_component = [](const Rec& a, const Rec& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        return a.component_id < b.component_id;
+    };
+
+    std::sort(collisions.begin(), collisions.end(), by_landscape_component);
+    std::sort(components.begin(), components.end(), by_landscape_component);
+
+    log << "SUMMARY\n";
+    log << "  scanned_objects=" << scanned << "\n";
+    log << "  collisions=" << collisions.size() << "\n";
+    log << "  landscape_components=" << components.size() << "\n\n";
+
+    std::vector<Rec> probe_objects;
+
+    auto add_probe = [&](const std::vector<Rec>& src, const char* reason)
+    {
+        if (src.empty()) return;
+
+        probe_objects.push_back(src.front());
+
+        if (src.size() > 2)
+        {
+            probe_objects.push_back(src[src.size() / 2]);
+        }
+
+        if (src.size() > 1)
+        {
+            probe_objects.push_back(src.back());
+        }
+
+        log << "probe_selection_" << reason << "_added_from=" << src.size() << "\n";
+    };
+
+    add_probe(collisions, "collisions");
+    add_probe(components, "components");
+
+    // Deduplicate and cap to 8.
+    std::vector<Rec> dedup;
+    for (const auto& r : probe_objects)
+    {
+        bool exists = false;
+        for (const auto& d : dedup)
+        {
+            if (d.addr == r.addr)
+            {
+                exists = true;
+                break;
+            }
+        }
+
+        if (!exists)
+        {
+            dedup.push_back(r);
+        }
+
+        if (dedup.size() >= 8) break;
+    }
+
+    log << "probe_objects=" << dedup.size() << "\n\n";
+
+    const size_t max_scan = 0x600;
+    const size_t stride = 4;
+
+    for (const auto& r : dedup)
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(r.obj);
+
+        std::vector<size_t> section_like_offsets;
+        std::vector<size_t> size_like_offsets;
+        std::vector<size_t> ptr_like_offsets;
+
+        for (size_t off = 0; off + 8 <= max_scan; off += stride)
+        {
+            int32_t i32 = phase8c_read_i32_unchecked(base, off);
+            uint32_t u32 = phase8c_read_u32_unchecked(base, off);
+
+            // SectionBase values are often world/grid-ish ints; keep broad.
+            if ((i32 >= -2000000 && i32 <= 2000000 && i32 != 0) ||
+                (i32 >= -32768 && i32 <= 32768 && i32 != 0))
+            {
+                if (section_like_offsets.size() < 80)
+                {
+                    section_like_offsets.push_back(off);
+                }
+            }
+
+            // Unreal landscape component sizes often around 7/15/31/63/127/255 or close.
+            if (u32 == 7 || u32 == 15 || u32 == 31 || u32 == 32 || u32 == 63 || u32 == 64 ||
+                u32 == 127 || u32 == 128 || u32 == 255 || u32 == 256 ||
+                u32 == 511 || u32 == 512 || u32 == 1023 || u32 == 1024)
+            {
+                if (size_like_offsets.size() < 80)
+                {
+                    size_like_offsets.push_back(off);
+                }
+            }
+
+            if (off + sizeof(uintptr_t) <= max_scan)
+            {
+                uintptr_t ptr = phase8c_read_ptr_unchecked(base, off);
+                if (phase8c_is_probably_readable_ptr(ptr))
+                {
+                    if (ptr_like_offsets.size() < 80)
+                    {
+                        ptr_like_offsets.push_back(off);
+                    }
+                }
+            }
+        }
+
+        auto join_offsets = [](const std::vector<size_t>& v) -> std::string
+        {
+            std::string out;
+            for (size_t i = 0; i < v.size() && i < 20; ++i)
+            {
+                out += std::to_string(v[i]);
+                if (i + 1 < v.size() && i + 1 < 20) out += "|";
+            }
+            return out;
+        };
+
+        csv << "\"" << r.kind << "\","
+            << "\"" << r.cls << "\","
+            << "\"" << r.name << "\","
+            << "\"" << r.path << "\","
+            << "\"0x" << std::hex << r.addr << std::dec << "\","
+            << r.landscape_id << ","
+            << r.component_id << ","
+            << section_like_offsets.size() << ","
+            << size_like_offsets.size() << ","
+            << ptr_like_offsets.size() << ","
+            << "\"" << join_offsets(section_like_offsets) << "\","
+            << "\"" << join_offsets(size_like_offsets) << "\","
+            << "\"" << join_offsets(ptr_like_offsets) << "\"\n";
+
+        log << "OBJECT\n";
+        log << "  kind=" << r.kind << "\n";
+        log << "  class=" << r.cls << "\n";
+        log << "  name=" << r.name << "\n";
+        log << "  path=" << r.path << "\n";
+        log << "  addr=0x" << std::hex << r.addr << std::dec << "\n";
+        log << "  landscape_id=" << r.landscape_id << "\n";
+        log << "  component_id=" << r.component_id << "\n";
+        log << "  section_like_offsets_count=" << section_like_offsets.size() << "\n";
+        log << "  size_like_offsets_count=" << size_like_offsets.size() << "\n";
+        log << "  ptr_like_offsets_count=" << ptr_like_offsets.size() << "\n";
+        log << "  section_like_offsets_first20=" << join_offsets(section_like_offsets) << "\n";
+        log << "  size_like_offsets_first20=" << join_offsets(size_like_offsets) << "\n";
+        log << "  ptr_like_offsets_first20=" << join_offsets(ptr_like_offsets) << "\n\n";
+
+        // Tiny raw windows from object memory only, not pointer-dereferenced data yet.
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x000, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x080, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x100, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x180, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x200, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x300, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x400, 128);
+        phase8c_dump_tiny_window(rawlog, r.kind.c_str(), r.obj, 0x500, 128);
+        rawlog << "\n";
+    }
+
+    log << "OUTPUTS\n";
+    log << "  txt=phase8c_component_layout_and_tiny_raw_probes.txt\n";
+    log << "  csv=phase8c_component_layout_candidates.csv\n";
+    log << "  rawlog=phase8c_tiny_raw_probe_windows.txt\n";
+    log << "NEXT\n";
+    log << "  If stable, Phase 8D should compare repeated offsets across all 1256 components and identify SectionBaseX/Y and size fields.\n";
+    log << "  Full height buffer dereference is still deferred until pointer candidates are narrowed.\n";
+
+    file_log("Phase 8C done probe_objects=" + std::to_string(dedup.size()));
+}
+// END PHASE8C_COMPONENT_LAYOUT_AND_TINY_RAW_PROBES
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -4282,7 +4658,8 @@ static void scan_render_targets()
                 // disabled v1.10.1: write_phase7f_pixel_grid_sample(o);
                 // disabled v1.11.0: write_phase7g_long_sampling_campaign(o, attempts);
                 // disabled v1.12.0: write_phase8a_landscape_heightmap_extraction(o, attempts);
-                write_phase8b_targeted_landscape_runtime_index(o, attempts);
+                // disabled v1.13.0: write_phase8b_targeted_landscape_runtime_index(o, attempts);
+                write_phase8c_component_layout_and_tiny_raw_probes(o, attempts);
             }
 
             return RC::LoopAction::Continue;
@@ -4299,15 +4676,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.12.0");
+        ModVersion = STR("1.13.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.12.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.12.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.13.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.13.0.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
