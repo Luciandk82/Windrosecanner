@@ -2589,113 +2589,67 @@ static void write_phase7b_ufunction_signature_dump(UObject* trigger)
 
 static void scan_render_targets()
 {
-    static bool phase6_done = false;
-    if (!phase6_done) { phase6_done = true; phase6_engine_method_discovery(); phase6b_scan_context(); }
-    file_log("Phase 7A scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 7A scan_render_targets started\n"));
+    static int attempts = 0;
 
-    auto out = out_dir();
-    std::ofstream json(out / "rt_native_runtime_scan.json");
+    if (attempts >= 12)
+    {
+        return;
+    }
 
-    json << "{\n";
-    json << "  \"version\": 2,\n";
-    json << "  \"note\": \"Native UE4SS RT metadata scan. Pixel export not enabled yet.\",\n";
-    json << "  \"targets\": [\n";
+    attempts++;
 
-    bool first = true;
-    int found = 0;
+    file_log("Phase 7 clean scan_render_targets started attempt " + std::to_string(attempts));
+
     int scanned = 0;
+    int found = 0;
 
-    UObjectGlobals::ForEachUObject([&](UObject* o, int32, int32) -> RC::LoopAction {
-        if (!o) return RC::LoopAction::Continue;
-
-        scanned++;
-
-        std::string path = obj_path(o);
-        if (!name_contains_target(path)) return RC::LoopAction::Continue;
-
-        std::string cls = class_name(o);
-
-        if (!is_rt_class_name(cls))
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
         {
+            if (!o)
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            scanned++;
+
+            std::string cls = class_name(o);
+
+            if (
+                cls != "TextureRenderTarget2D" &&
+                cls != "TextureRenderTarget2DArray"
+            )
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            std::string full = obj_path(o);
+
+            if (
+                full.find("RT_MapCapture") == std::string::npos &&
+                full.find("RT_MapFog") == std::string::npos &&
+                full.find("RT_LandscapeTable") == std::string::npos &&
+                full.find("RT_LandscapeHeights") == std::string::npos &&
+                full.find("RT_Biomes") == std::string::npos &&
+                full.find("RT_SubBiomes") == std::string::npos &&
+                full.find("RT_BiomeDistanceFields") == std::string::npos
+            )
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            found++;
+
+            write_phase7a_ue_runtime_readback_discovery(o);
+            write_phase7b_ufunction_signature_dump(o);
+
             return RC::LoopAction::Continue;
         }
+    );
 
-        int32_t sx_tmp = 0;
-        int32_t sy_tmp = 0;
-        read_prop_value<int32_t>(o, STR("SizeX"), sx_tmp);
-        read_prop_value<int32_t>(o, STR("SizeY"), sy_tmp);
-
-        if (!text_contains_any(path) && sx_tmp <= 1 && sy_tmp <= 1)
-        {
-            return RC::LoopAction::Continue;
-        }
-
-        found++;
-
-        write_pixel_export_probe(o);
-        write_resource_access_probe(o);
-        write_native_memory_probe(o);
-        write_deep_pointer_probe(o);
-        write_targeted_chain_probe(o);
-        // DISABLED v1.8.2: legacy Phase 6C probe
-        // // DISABLED v1.9.3 cleanup: write_phase6c_vtable_diagnostic(o);
-        // disabled in Phase 7A fast scan: // DISABLED v1.9.3 cleanup: write_phase6d_raw_candidate_dump(o);
-        // disabled in Phase 7A fast scan: // DISABLED v1.9.3 cleanup: write_phase6e_small_candidate_dumps(o);
-        // disabled in Phase 7A fast scan: // DISABLED v1.9.3 cleanup: write_phase6f_aggressive_resource_dump(o);
-
-
-        write_phase7a_ue_runtime_readback_discovery(o);
-        write_phase7b_ufunction_signature_dump(o);
-        if (!first) json << ",\n";
-        first = false;
-
-        json << "  {\n";
-        json << "    \"name\":\"" << json_escape(obj_name(o)) << "\",\n";
-        json << "    \"path\":\"" << json_escape(path) << "\",\n";
-        json << "    \"class\":\"" << json_escape(cls) << "\",\n";
-        json << "    \"address\":\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\",\n";
-        json << "    \"outer_chain\":\"" << json_escape(outer_chain(o)) << "\",\n";
-        json << "    \"outer_chain\":\"" << json_escape(outer_chain(o)) << "\",\n";
-
-        write_prop(json, o, "SizeX", STR("SizeX"));
-        write_prop(json, o, "SizeY", STR("SizeY"));
-        write_prop(json, o, "Slices", STR("Slices"));
-        write_prop(json, o, "OverrideFormat", STR("OverrideFormat"));
-        write_prop(json, o, "RenderTargetFormat", STR("RenderTargetFormat"));
-        write_prop(json, o, "PixelFormat", STR("PixelFormat"));
-        write_prop(json, o, "Format", STR("Format"));
-        write_prop(json, o, "SRGB", STR("SRGB"));
-        write_prop(json, o, "bHDR", STR("bHDR"));
-        write_prop(json, o, "bForceLinearGamma", STR("bForceLinearGamma"));
-        write_prop(json, o, "Filter", STR("Filter"));
-        write_prop(json, o, "LODGroup", STR("LODGroup"));
-        write_prop(json, o, "CompressionSettings", STR("CompressionSettings"));
-        write_prop(json, o, "NeverStream", STR("NeverStream"));
-        write_prop(json, o, "Source", STR("Source"));
-        write_prop(json, o, "PlatformData", STR("PlatformData"));
-        write_prop(json, o, "Resource", STR("Resource"), false);
-
-        json << "  }";
-
-        return RC::LoopAction::Continue;
-    });
-
-    json << "\n  ],\n";
-    json << "  \"scanned_objects\":" << scanned << ",\n";
-    json << "  \"found_targets\":" << found << ",\n";
-    json << "  \"pixel_export_enabled\": false\n";
-    json << "}\n";
-
-    json.close();
-
-    std::ofstream done(out / "rt_native_runtime_scan_done");
-    done << "ok\n";
-    done.close();
-
-    file_log("Phase 7A scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 7A done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 7 clean scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
 }
+
 
 class RTNativeExporter : public CppUserModBase
 {
@@ -2703,15 +2657,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.3");
+        ModVersion = STR("1.9.4");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.3.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.3.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.4.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.4.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
