@@ -380,7 +380,7 @@ static void write_resource_access_probe(UObject* o)
     f << "note=Phase5A is a safe native resource/function probe only. No ReadPixels call yet.\n";
     f << "\n";
 
-    file_log("Phase 6I resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 7A resource probe candidate: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 
 
@@ -470,7 +470,7 @@ static void write_native_memory_probe(UObject* o)
 
     f << "note=Phase5B only scans native memory pointer candidates. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 6I native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 7A native memory probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5B_NATIVE_MEMORY_PROBE
 
@@ -575,7 +575,7 @@ static void write_deep_pointer_probe(UObject* o)
 
     f << "note=Phase5C deep pointer probe. No method call and no ReadPixels yet.\n\n";
 
-    file_log("Phase 6I deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 7A deep pointer probe: " + path + " size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5C_DEEP_POINTER_PROBE
 
@@ -634,11 +634,11 @@ static void write_targeted_chain_probe(UObject* o)
     std::string path = obj_path(o);
     if (path.find("RT_MapCapture") == std::string::npos)
     {
-        file_log("Phase 6I skip non-MapCapture: " + path);
+        file_log("Phase 7A skip non-MapCapture: " + path);
         return;
     }
 
-    file_log("Phase 6I processing MapCapture: " + path);
+    file_log("Phase 7A processing MapCapture: " + path);
 
     auto out = out_dir();
     std::ofstream f(out / "RT_MapCapture_targeted_chain_probe.txt", std::ios::app);
@@ -697,7 +697,7 @@ static void write_targeted_chain_probe(UObject* o)
 
     f << "\nnote=Phase5D targeted chain probe for RT_MapCapture only. No ReadPixels and no memory copy export yet.\n\n";
 
-    file_log("Phase 6I targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
+    file_log("Phase 7A targeted chain probe RT_MapCapture size=" + std::to_string(sx) + "x" + std::to_string(sy));
 }
 // END PHASE5D_TARGETED_CHAIN_PROBE
 
@@ -835,7 +835,7 @@ static void phase6_engine_method_discovery()
     auto out = out_dir();
     std::ofstream f(out / "phase6_engine_method_discovery.txt", std::ios::out);
 
-    f << "Phase 6I engine method discovery\n";
+    f << "Phase 7A engine method discovery\n";
     f << "Targets: GameThread_GetRenderTargetResource, ReadPixels, ReadLinearColorPixels, RHILockTexture2D, FTextureRenderTargetResource\n";
     f << "Mode: scan loaded module memory for ASCII/UTF16 method/type strings. No calls. No ReadPixels. No GPU access.\n\n";
 
@@ -865,7 +865,7 @@ static void phase6_engine_method_discovery()
     CloseHandle(snap);
 
     f << "\nDone.\n";
-    file_log("Phase 6I engine method discovery wrote phase6_engine_method_discovery.txt");
+    file_log("Phase 7A engine method discovery wrote phase6_engine_method_discovery.txt");
 }
 // END PHASE6A_ENGINE_METHOD_DISCOVERY
 
@@ -907,7 +907,7 @@ static void phase6b_scan_context()
         "ReadSurfaceData"
     };
 
-    f << "Phase 6I string context scanner\n";
+    f << "Phase 7A string context scanner\n";
     f << "Goal: locate actual string addresses inside WindroseServer-Win64-Shipping.exe and dump nearby memory.\n";
     f << "No function calls. No ReadPixels. No GPU access.\n\n";
 
@@ -1004,7 +1004,7 @@ static void phase6b_scan_context()
         f << "  total_limited_hits=" << hits << "\n\n";
     }
 
-    file_log("Phase 6I wrote phase6b_string_context.txt");
+    file_log("Phase 7A wrote phase6b_string_context.txt");
 }
 // END PHASE6B_STRING_CONTEXT_SCANNER
 
@@ -1098,7 +1098,7 @@ static void write_phase6c_vtable_diagnostic(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    f << "Phase 6I vtable diagnostic\n";
+    f << "Phase 7A vtable diagnostic\n";
     f << "object=" << path << "\n";
     f << "class=" << class_name(o) << "\n";
     f << "SizeX=" << sx << "\n";
@@ -1165,7 +1165,7 @@ static void write_phase6c_vtable_diagnostic(UObject* o)
     }
 
     f << "\nnote=Phase6C only dumps vtable/function pointer diagnostics. No function calls, no ReadPixels, no GPU access.\n";
-    file_log("Phase 6I wrote phase6c_vtable_diagnostic.txt");
+    file_log("Phase 7A wrote phase6c_vtable_diagnostic.txt");
 }
 // END PHASE6C_VTABLE_DIAGNOSTIC
 
@@ -1204,7 +1204,7 @@ static void write_phase6d_raw_candidate_dump(UObject* o)
 
     const size_t expected = 2048ULL * 2048ULL * 4ULL;
 
-    log << "Phase 6I raw candidate dump\n";
+    log << "Phase 7A raw candidate dump\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1313,7 +1313,7 @@ static void write_phase6d_raw_candidate_dump(UObject* o)
     log << "\ndumped_count=" << dumped << "\n";
     log << "note=Phase6D only copies readable 16MB CPU memory candidates. No function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6I raw candidate dump done count=" + std::to_string(dumped));
+    file_log("Phase 7A raw candidate dump done count=" + std::to_string(dumped));
 }
 // END PHASE6D_RAW_CANDIDATE_DUMP
 
@@ -1350,7 +1350,7 @@ static void write_phase6e_small_candidate_dumps(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    log << "Phase 6I small candidate dumps\n";
+    log << "Phase 7A small candidate dumps\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1445,7 +1445,7 @@ static void write_phase6e_small_candidate_dumps(UObject* o)
     log << "\ndumped_files=" << dumped << "\n";
     log << "note=Phase6E dumps small readable chunks only. No function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6I small candidate dumps done files=" + std::to_string(dumped));
+    file_log("Phase 7A small candidate dumps done files=" + std::to_string(dumped));
 }
 // END PHASE6E_SMALL_CANDIDATE_DUMPS
 
@@ -1556,7 +1556,7 @@ static void write_phase6f_aggressive_resource_dump(UObject* o)
     read_prop_value<int32_t>(o, STR("SizeX"), sx);
     read_prop_value<int32_t>(o, STR("SizeY"), sy);
 
-    log << "Phase 6I aggressive resource dump\n";
+    log << "Phase 7A aggressive resource dump\n";
     log << "object=" << path << "\n";
     log << "class=" << class_name(o) << "\n";
     log << "SizeX=" << sx << "\n";
@@ -1702,7 +1702,7 @@ static void write_phase6f_aggressive_resource_dump(UObject* o)
     log << "dumped=" << dumped << "\n";
     log << "note=Phase6F aggressive dump. Still no function calls, no ReadPixels, no GPU API.\n";
 
-    file_log("Phase 6I aggressive resource dump " + prefix + " dumped=" + std::to_string(dumped));
+    file_log("Phase 7A aggressive resource dump " + prefix + " dumped=" + std::to_string(dumped));
 }
 // END PHASE6F_AGGRESSIVE_RESOURCE_DUMP
 
@@ -1750,11 +1750,11 @@ static std::string phase6g_read_wide_ascii(uint8_t* p, size_t max_chars)
 
 static void write_phase6g_string_neighborhood_probe(UObject* o)
 {
-    file_log("Phase 6I string-neighborhood entered");
+    file_log("Phase 7A string-neighborhood entered");
     static bool done = false;
     if (done || !o)
     {
-        file_log("Phase 6I early return: done or null object");
+        file_log("Phase 7A early return: done or null object");
         return;
     }
 
@@ -1766,7 +1766,7 @@ static void write_phase6g_string_neighborhood_probe(UObject* o)
     auto out = out_dir();
     std::ofstream log(out / "phase6g_string_neighborhood_probe.txt", std::ios::out);
 
-    log << "Phase 6I targeted string-neighborhood probe\n";
+    log << "Phase 7A targeted string-neighborhood probe\n";
     log << "trigger_object=" << path << "\n";
     log << "trigger_class=" << class_name(o) << "\n\n";
 
@@ -1920,7 +1920,7 @@ static void write_phase6g_string_neighborhood_probe(UObject* o)
     log << "\ntotal_hits=" << total_hits << "\n";
     log << "note=Phase6G scans exe memory for known texture/render strings and xrefs. No function calls, no GPU API.\n";
 
-    file_log("Phase 6I string-neighborhood probe done hits=" + std::to_string(total_hits));
+    file_log("Phase 7A string-neighborhood probe done hits=" + std::to_string(total_hits));
 }
 // END PHASE6G_STRING_NEIGHBORHOOD_PROBE
 
@@ -1940,7 +1940,7 @@ static void write_phase6h_fast_module_string_scan(UObject* o)
     auto out = out_dir();
     std::ofstream log(out / "phase6h_fast_module_string_scan.txt", std::ios::out);
 
-    file_log("Phase 6I fast module string scan entered");
+    file_log("Phase 7A fast module string scan entered");
 
     HMODULE hExe = GetModuleHandleW(L"WindroseServer-Win64-Shipping.exe");
     if (!hExe)
@@ -1951,7 +1951,7 @@ static void write_phase6h_fast_module_string_scan(UObject* o)
     if (!hExe)
     {
         log << "ERROR no module handle\n";
-        file_log("Phase 6I no module handle");
+        file_log("Phase 7A no module handle");
         return;
     }
 
@@ -1959,14 +1959,14 @@ static void write_phase6h_fast_module_string_scan(UObject* o)
     if (!GetModuleInformation(GetCurrentProcess(), hExe, &mi, sizeof(mi)))
     {
         log << "ERROR GetModuleInformation failed\n";
-        file_log("Phase 6I GetModuleInformation failed");
+        file_log("Phase 7A GetModuleInformation failed");
         return;
     }
 
     uint8_t* base = reinterpret_cast<uint8_t*>(mi.lpBaseOfDll);
     size_t size = static_cast<size_t>(mi.SizeOfImage);
 
-    log << "Phase 6I fast module string scan\n";
+    log << "Phase 7A fast module string scan\n";
     log << "trigger_object=" << path << "\n";
     log << "module_base=0x" << std::hex << reinterpret_cast<uintptr_t>(base)
         << " module_size=0x" << size << std::dec << "\n";
@@ -2111,7 +2111,7 @@ static void write_phase6h_fast_module_string_scan(UObject* o)
     log << "note=Phase6H fast scanner. Heavy dumps disabled. No function calls, no GPU API.\n";
     log.flush();
 
-    file_log("Phase 6I fast module string scan done hits=" + std::to_string(total_hits));
+    file_log("Phase 7A fast module string scan done hits=" + std::to_string(total_hits));
 }
 // END PHASE6H_FAST_MODULE_STRING_SCAN
 
@@ -2150,7 +2150,7 @@ static void write_phase6i_targeted_xref_scan(UObject* o)
     auto out = out_dir();
     std::ofstream log(out / "phase6i_targeted_xref_scan.txt", std::ios::out);
 
-    file_log("Phase 6I targeted xref scan entered");
+    file_log("Phase 7A targeted xref scan entered");
 
     HMODULE hExe = GetModuleHandleW(L"WindroseServer-Win64-Shipping.exe");
     if (!hExe) hExe = GetModuleHandleW(nullptr);
@@ -2171,7 +2171,7 @@ static void write_phase6i_targeted_xref_scan(UObject* o)
     uint8_t* base = reinterpret_cast<uint8_t*>(mi.lpBaseOfDll);
     size_t size = static_cast<size_t>(mi.SizeOfImage);
 
-    log << "Phase 6I targeted xref/code-window scan\n";
+    log << "Phase 7A targeted xref/code-window scan\n";
     log << "trigger_object=" << path << "\n";
     log << "module_base=0x" << std::hex << reinterpret_cast<uintptr_t>(base)
         << " module_size=0x" << size << std::dec << "\n\n";
@@ -2375,16 +2375,106 @@ static void write_phase6i_targeted_xref_scan(UObject* o)
     log << "note=Phase6I xref scan only. Heavy dumps disabled. No function calls, no GPU API.\n";
     log.flush();
 
-    file_log("Phase 6I targeted xref scan done total_xrefs=" + std::to_string(total_xrefs));
+    file_log("Phase 7A targeted xref scan done total_xrefs=" + std::to_string(total_xrefs));
 }
 // END PHASE6I_TARGETED_XREF_SCAN
+
+
+
+// BEGIN PHASE7A_UE_RUNTIME_READBACK_DISCOVERY
+static void write_phase7a_ue_runtime_readback_discovery(UObject* trigger)
+{
+    static bool done = false;
+    if (done || !trigger) return;
+
+    std::string path = obj_path(trigger);
+    if (path.find("RT_MapCapture") == std::string::npos) return;
+
+    done = true;
+
+    auto out = out_dir();
+    std::ofstream log(out / "phase7a_ue_runtime_readback_discovery.txt", std::ios::out);
+
+    file_log("Phase 7A UE runtime readback discovery entered");
+
+    log << "Phase 7A UE runtime readback discovery\n";
+    log << "trigger=" << path << "\n\n";
+
+    const char* needles[] = {
+        "KismetRenderingLibrary",
+        "ReadRenderTarget",
+        "ReadRenderTargetRaw",
+        "ReadRenderTargetPixel",
+        "ReadRenderTargetRawPixel",
+        "ExportRenderTarget",
+        "ImportBufferAsTexture2D",
+        "RenderTargetCreateStaticTexture2DEditorOnly",
+        "BeginDrawCanvasToRenderTarget",
+        "EndDrawCanvasToRenderTarget",
+        "ClearRenderTarget2D",
+        "DrawMaterialToRenderTarget",
+        "TextureRenderTarget2D",
+        "TextureRenderTarget2DArray",
+        "RT_MapCapture",
+        "RT_LandscapeTable",
+        "RT_LandscapeHeights",
+        "RT_Biomes",
+        "RT_BiomeDistanceFields"
+    };
+
+    int scanned = 0;
+    int hits = 0;
+
+    auto objects = RC::Unreal::UObjectGlobals::GetGlobalObjects();
+
+    for (int32_t i = 0; i < objects.Num(); ++i)
+    {
+        UObject* o = objects.GetByIndex(i);
+        if (!o) continue;
+
+        scanned++;
+
+        std::string name = obj_name(o);
+        std::string full = obj_path(o);
+        std::string cls = class_name(o);
+
+        bool match = false;
+        for (const char* n : needles)
+        {
+            if (name.find(n) != std::string::npos || full.find(n) != std::string::npos || cls.find(n) != std::string::npos)
+            {
+                match = true;
+                break;
+            }
+        }
+
+        if (!match) continue;
+
+        hits++;
+
+        log << "HIT[" << hits << "]\n";
+        log << "  name=" << name << "\n";
+        log << "  path=" << full << "\n";
+        log << "  class=" << cls << "\n";
+        log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n\n";
+
+        if (hits >= 500) break;
+    }
+
+    log << "scanned_objects=" << scanned << "\n";
+    log << "hits=" << hits << "\n";
+    log << "note=Discovery only. No ProcessEvent calls, no GPU API, no ReadPixels yet.\n";
+
+    file_log("Phase 7A UE runtime readback discovery done hits=" + std::to_string(hits));
+}
+// END PHASE7A_UE_RUNTIME_READBACK_DISCOVERY
 
 static void scan_render_targets()
 {
     static bool phase6_done = false;
     if (!phase6_done) { phase6_done = true; phase6_engine_method_discovery(); phase6b_scan_context(); }
-    file_log("Phase 6I scan_render_targets started");
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6I scan_render_targets started\n"));
+    file_log("Phase 7A scan_render_targets started");
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 7A scan_render_targets started\n"));
 
     auto out = out_dir();
     std::ofstream json(out / "rt_native_runtime_scan.json");
@@ -2431,10 +2521,10 @@ static void scan_render_targets()
         write_deep_pointer_probe(o);
         write_targeted_chain_probe(o);
         write_phase6c_vtable_diagnostic(o);
-        // disabled in Phase 6I fast scan: write_phase6d_raw_candidate_dump(o);
-        // disabled in Phase 6I fast scan: write_phase6e_small_candidate_dumps(o);
-        write_phase6i_targeted_xref_scan(o);
-        // disabled in Phase 6I fast scan: write_phase6f_aggressive_resource_dump(o);
+        // disabled in Phase 7A fast scan: write_phase6d_raw_candidate_dump(o);
+        // disabled in Phase 7A fast scan: write_phase6e_small_candidate_dumps(o);
+        write_phase7a_ue_runtime_readback_discovery(o);
+        // disabled in Phase 7A fast scan: write_phase6f_aggressive_resource_dump(o);
 
         if (!first) json << ",\n";
         first = false;
@@ -2482,8 +2572,8 @@ static void scan_render_targets()
     done << "ok\n";
     done.close();
 
-    file_log("Phase 6I scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
-    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 6I done. found={} scanned={}\n"), found, scanned);
+    file_log("Phase 7A scan_render_targets done. found=" + std::to_string(found) + " scanned=" + std::to_string(scanned));
+    Output::send<LogLevel::Verbose>(STR("[RTN] Phase 7A done. found={} scanned={}\n"), found, scanned);
 }
 
 class RTNativeExporter : public CppUserModBase
@@ -2492,15 +2582,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.7.0");
+        ModVersion = STR("1.8.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.7 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.7 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.8 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.8 on_unreal_init");
     }
 
     auto on_update() -> void override
