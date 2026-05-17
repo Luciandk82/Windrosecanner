@@ -2589,20 +2589,10 @@ static void write_phase7b_ufunction_signature_dump(UObject* trigger)
 
 
 
+
+
+
 // BEGIN PHASE7C1_CONTEXT_OBJECT_DISCOVERY
-static bool phase7c1_path_has_any(const std::string& full, const char* const* needles, int count)
-{
-    for (int i = 0; i < count; ++i)
-    {
-        if (full.find(needles[i]) != std::string::npos)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
 static void write_phase7c1_context_object_discovery(UObject* trigger)
 {
     static bool done = false;
@@ -2616,43 +2606,43 @@ static void write_phase7c1_context_object_discovery(UObject* trigger)
     auto out = out_dir();
     std::ofstream log(out / "phase7c1_context_object_discovery.txt", std::ios::out);
 
-    file_log("Phase 7C1 context object discovery entered");
+    file_log("Phase 7C1B targeted context object discovery entered");
 
-    log << "Phase 7C1 context object discovery\n";
+    log << "Phase 7C1B targeted context object discovery\n";
     log << "trigger=" << trigger_path << "\n";
-    log << "mode=discovery_only_no_ProcessEvent_no_GPU_no_ReadPixels\n\n";
-
-    const char* context_needles[] = {
-        "Default__KismetRenderingLibrary",
-        "RT_MapCapture.RT_MapCapture",
-        "RT_MapFog.RT_MapFog",
-        "GameEngine",
-        "Engine.",
-        "World ",
-        "/Game/Maps/",
-        "Genlandia",
-        "PersistentLevel",
-        "GameInstance",
-        "GameViewportClient",
-        "PlayerController",
-        "R5PlayerController",
-        "R5IslandManager",
-        "R5TerrainSettings",
-        "KismetRenderingLibrary"
-    };
+    log << "mode=full_scan_targeted_candidates_only_no_ProcessEvent_no_GPU_no_ReadPixels\n\n";
 
     int scanned = 0;
-    int hits = 0;
+    int logged_hits = 0;
 
     UObject* default_kismet = nullptr;
     UObject* rt_map_capture = nullptr;
     UObject* rt_map_fog = nullptr;
+    UObject* rt_landscape_table = nullptr;
+    UObject* rt_landscape_heights = nullptr;
+    UObject* rt_biomes = nullptr;
+    UObject* rt_sub_biomes = nullptr;
+    UObject* rt_biome_distance_fields = nullptr;
+
     UObject* likely_world = nullptr;
     UObject* likely_game_instance = nullptr;
     UObject* likely_engine = nullptr;
+    UObject* likely_game_viewport = nullptr;
     UObject* likely_player_controller = nullptr;
+    UObject* likely_r5_player_controller = nullptr;
     UObject* likely_island_manager = nullptr;
     UObject* likely_terrain_settings = nullptr;
+    UObject* likely_persistent_level = nullptr;
+
+    auto log_hit = [&](const char* label, UObject* o, const std::string& name, const std::string& full, const std::string& cls)
+    {
+        logged_hits++;
+        log << "TARGET_HIT[" << logged_hits << "] " << label << "\n";
+        log << "  name=" << name << "\n";
+        log << "  path=" << full << "\n";
+        log << "  class=" << cls << "\n";
+        log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n\n";
+    };
 
     RC::Unreal::UObjectGlobals::ForEachUObject(
         [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
@@ -2668,74 +2658,121 @@ static void write_phase7c1_context_object_discovery(UObject* trigger)
             std::string full = obj_path(o);
             std::string cls = class_name(o);
 
-            if (full.find("Default__KismetRenderingLibrary") != std::string::npos)
+            bool should_log = false;
+            const char* label = "unknown";
+
+            if (full == "/Script/Engine.Default__KismetRenderingLibrary" || full.find("Default__KismetRenderingLibrary") != std::string::npos)
             {
                 default_kismet = o;
+                should_log = true;
+                label = "Default__KismetRenderingLibrary";
             }
-
-            if (full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture") != std::string::npos)
+            else if (full == "/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture")
             {
                 rt_map_capture = o;
+                should_log = true;
+                label = "RT_MapCapture";
             }
-
-            if (full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapFog.RT_MapFog") != std::string::npos)
+            else if (full == "/Game/UI/META/FullscreenMap/Assets/RT_MapFog.RT_MapFog")
             {
                 rt_map_fog = o;
+                should_log = true;
+                label = "RT_MapFog";
             }
-
-            if (!likely_engine && (cls.find("GameEngine") != std::string::npos || full.find("GameEngine") != std::string::npos))
+            else if (full == "/R5TerrainGeneratorAPI/Volumization/RT_LandscapeTable.RT_LandscapeTable")
             {
-                likely_engine = o;
+                rt_landscape_table = o;
+                should_log = true;
+                label = "RT_LandscapeTable";
             }
-
-            if (!likely_game_instance && (cls.find("GameInstance") != std::string::npos || full.find("GameInstance") != std::string::npos))
+            else if (full == "/R5TerrainGeneratorAPI/Volumization/RT_LandscapeHeights.RT_LandscapeHeights")
             {
-                likely_game_instance = o;
+                rt_landscape_heights = o;
+                should_log = true;
+                label = "RT_LandscapeHeights";
             }
-
-            if (!likely_player_controller && (cls.find("PlayerController") != std::string::npos || full.find("PlayerController") != std::string::npos))
+            else if (full == "/R5TerrainGeneratorAPI/Volumization/RT_Biomes.RT_Biomes")
             {
-                likely_player_controller = o;
+                rt_biomes = o;
+                should_log = true;
+                label = "RT_Biomes";
             }
-
-            if (!likely_island_manager && (cls.find("R5IslandManager") != std::string::npos || full.find("R5IslandManager") != std::string::npos))
+            else if (full == "/R5TerrainGeneratorAPI/Volumization/RT_SubBiomes.RT_SubBiomes")
             {
-                likely_island_manager = o;
+                rt_sub_biomes = o;
+                should_log = true;
+                label = "RT_SubBiomes";
             }
-
-            if (!likely_terrain_settings && (cls.find("R5TerrainSettings") != std::string::npos || full.find("R5TerrainSettings") != std::string::npos))
+            else if (full == "/R5TerrainGeneratorAPI/Volumization/RT_BiomeDistanceFields.RT_BiomeDistanceFields")
             {
-                likely_terrain_settings = o;
+                rt_biome_distance_fields = o;
+                should_log = true;
+                label = "RT_BiomeDistanceFields";
             }
-
-            if (!likely_world && (cls == "World" || full.find("PersistentLevel") != std::string::npos || full.find("/Game/Maps/") != std::string::npos))
+            else if (!likely_world && cls == "World" && full.find("/Game/Maps/") != std::string::npos)
             {
                 likely_world = o;
+                should_log = true;
+                label = "LikelyWorld_GameMaps";
+            }
+            else if (!likely_world && cls == "World")
+            {
+                likely_world = o;
+                should_log = true;
+                label = "LikelyWorld_ClassWorld";
+            }
+            else if (!likely_persistent_level && cls == "Level" && full.find("PersistentLevel") != std::string::npos)
+            {
+                likely_persistent_level = o;
+                should_log = true;
+                label = "LikelyPersistentLevel";
+            }
+            else if (!likely_game_instance && cls.find("GameInstance") != std::string::npos && cls != "Class")
+            {
+                likely_game_instance = o;
+                should_log = true;
+                label = "LikelyGameInstance";
+            }
+            else if (!likely_engine && cls.find("GameEngine") != std::string::npos && cls != "Class")
+            {
+                likely_engine = o;
+                should_log = true;
+                label = "LikelyGameEngine";
+            }
+            else if (!likely_game_viewport && cls.find("GameViewportClient") != std::string::npos && cls != "Class")
+            {
+                likely_game_viewport = o;
+                should_log = true;
+                label = "LikelyGameViewportClient";
+            }
+            else if (!likely_r5_player_controller && (cls.find("R5PlayerController") != std::string::npos || full.find("R5PlayerController") != std::string::npos) && cls != "Class")
+            {
+                likely_r5_player_controller = o;
+                should_log = true;
+                label = "LikelyR5PlayerController";
+            }
+            else if (!likely_player_controller && cls.find("PlayerController") != std::string::npos && cls != "Class")
+            {
+                likely_player_controller = o;
+                should_log = true;
+                label = "LikelyPlayerController";
+            }
+            else if (!likely_island_manager && (cls.find("R5IslandManager") != std::string::npos || full.find("R5IslandManager") != std::string::npos) && cls != "Class")
+            {
+                likely_island_manager = o;
+                should_log = true;
+                label = "LikelyR5IslandManager";
+            }
+            else if (!likely_terrain_settings && (cls.find("R5TerrainSettings") != std::string::npos || full.find("R5TerrainSettings") != std::string::npos) && cls != "Class")
+            {
+                likely_terrain_settings = o;
+                should_log = true;
+                label = "LikelyR5TerrainSettings";
             }
 
-            bool interesting = phase7c1_path_has_any(full, context_needles, static_cast<int>(sizeof(context_needles) / sizeof(context_needles[0])));
-
-            if (!interesting)
+            if (should_log)
             {
-                interesting = phase7c1_path_has_any(cls, context_needles, static_cast<int>(sizeof(context_needles) / sizeof(context_needles[0])));
-            }
-
-            if (!interesting)
-            {
-                return RC::LoopAction::Continue;
-            }
-
-            hits++;
-
-            log << "HIT[" << hits << "]\n";
-            log << "  name=" << name << "\n";
-            log << "  path=" << full << "\n";
-            log << "  class=" << cls << "\n";
-            log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n\n";
-
-            if (hits >= 250)
-            {
-                return RC::LoopAction::Break;
+                log_hit(label, o, name, full, cls);
             }
 
             return RC::LoopAction::Continue;
@@ -2763,18 +2800,26 @@ static void write_phase7c1_context_object_discovery(UObject* trigger)
     write_candidate("Default__KismetRenderingLibrary", default_kismet);
     write_candidate("RT_MapCapture", rt_map_capture);
     write_candidate("RT_MapFog", rt_map_fog);
-    write_candidate("LikelyWorldContextObject_WorldOrLevel", likely_world);
+    write_candidate("RT_LandscapeTable", rt_landscape_table);
+    write_candidate("RT_LandscapeHeights", rt_landscape_heights);
+    write_candidate("RT_Biomes", rt_biomes);
+    write_candidate("RT_SubBiomes", rt_sub_biomes);
+    write_candidate("RT_BiomeDistanceFields", rt_biome_distance_fields);
+    write_candidate("LikelyWorldContextObject_World", likely_world);
+    write_candidate("LikelyPersistentLevel", likely_persistent_level);
     write_candidate("LikelyGameInstance", likely_game_instance);
     write_candidate("LikelyEngine", likely_engine);
+    write_candidate("LikelyGameViewportClient", likely_game_viewport);
     write_candidate("LikelyPlayerController", likely_player_controller);
+    write_candidate("LikelyR5PlayerController", likely_r5_player_controller);
     write_candidate("LikelyR5IslandManager", likely_island_manager);
     write_candidate("LikelyR5TerrainSettings", likely_terrain_settings);
 
     log << "scanned_objects=" << scanned << "\n";
-    log << "hits=" << hits << "\n";
-    log << "note=Phase 7C1 only identifies safe candidate objects for later ProcessEvent planning. No function invocation happened.\n";
+    log << "logged_hits=" << logged_hits << "\n";
+    log << "note=Phase 7C1B performs a full object scan and logs only targeted candidates. No function invocation happened.\n";
 
-    file_log("Phase 7C1 context object discovery done hits=" + std::to_string(hits));
+    file_log("Phase 7C1B targeted context object discovery done scanned=" + std::to_string(scanned) + " hits=" + std::to_string(logged_hits));
 }
 // END PHASE7C1_CONTEXT_OBJECT_DISCOVERY
 
@@ -2849,15 +2894,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.5");
+        ModVersion = STR("1.9.6");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.5.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.5.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.6.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.6.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
