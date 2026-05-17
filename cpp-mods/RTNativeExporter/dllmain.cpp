@@ -2540,7 +2540,8 @@ static void scan_render_targets()
         write_native_memory_probe(o);
         write_deep_pointer_probe(o);
         write_targeted_chain_probe(o);
-        write_phase6c_vtable_diagnostic(o);
+        // DISABLED v1.8.2: legacy Phase 6C probe
+        // write_phase6c_vtable_diagnostic(o);
         // disabled in Phase 7A fast scan: write_phase6d_raw_candidate_dump(o);
         // disabled in Phase 7A fast scan: write_phase6e_small_candidate_dumps(o);
         write_phase7a_ue_runtime_readback_discovery(o);
@@ -2602,15 +2603,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.8.1");
+        ModVersion = STR("1.8.2");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.8.1 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.8.1 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.8.2.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.8.2.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
