@@ -3835,8 +3835,7 @@ static void write_phase8a_landscape_heightmap_extraction(UObject* trigger, int s
                 << "\"" << name << "\","
                 << "\"" << full << "\","
                 << "\"0x" << std::hex << addr << std::dec << "\"\n";
-            log << "  property_probe=disabled_v1.11.1_no_UObject_GetClass_available
-";
+            log << "  property_probe=disabled_v1.11.2_no_UObject_GetClass_available\n";
 
             log << "\n";
 
@@ -3953,15 +3952,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.11.1");
+        ModVersion = STR("1.11.2");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.11.1.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.11.1.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.11.2.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.11.2.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
