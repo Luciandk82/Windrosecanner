@@ -2381,6 +2381,9 @@ static void write_phase6i_targeted_xref_scan(UObject* o)
 
 
 
+
+
+
 // BEGIN PHASE7A_UE_RUNTIME_READBACK_DISCOVERY
 static void write_phase7a_ue_runtime_readback_discovery(UObject* trigger)
 {
@@ -2416,50 +2419,67 @@ static void write_phase7a_ue_runtime_readback_discovery(UObject* trigger)
         "TextureRenderTarget2D",
         "TextureRenderTarget2DArray",
         "RT_MapCapture",
+        "RT_MapFog",
         "RT_LandscapeTable",
         "RT_LandscapeHeights",
         "RT_Biomes",
+        "RT_SubBiomes",
         "RT_BiomeDistanceFields"
     };
 
     int scanned = 0;
     int hits = 0;
 
-    auto objects = RC::Unreal::UObjectGlobals::GetGlobalObjects();
-
-    for (int32_t i = 0; i < objects.Num(); ++i)
-    {
-        UObject* o = objects.GetByIndex(i);
-        if (!o) continue;
-
-        scanned++;
-
-        std::string name = obj_name(o);
-        std::string full = obj_path(o);
-        std::string cls = class_name(o);
-
-        bool match = false;
-        for (const char* n : needles)
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
         {
-            if (name.find(n) != std::string::npos || full.find(n) != std::string::npos || cls.find(n) != std::string::npos)
+            if (!o)
             {
-                match = true;
-                break;
+                return RC::LoopAction::Continue;
             }
+
+            scanned++;
+
+            std::string name = obj_name(o);
+            std::string full = obj_path(o);
+            std::string cls = class_name(o);
+
+            bool match = false;
+
+            for (const char* n : needles)
+            {
+                if (
+                    name.find(n) != std::string::npos ||
+                    full.find(n) != std::string::npos ||
+                    cls.find(n) != std::string::npos
+                )
+                {
+                    match = true;
+                    break;
+                }
+            }
+
+            if (!match)
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            hits++;
+
+            log << "HIT[" << hits << "]\n";
+            log << "  name=" << name << "\n";
+            log << "  path=" << full << "\n";
+            log << "  class=" << cls << "\n";
+            log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n\n";
+
+            if (hits >= 500)
+            {
+                return RC::LoopAction::Break;
+            }
+
+            return RC::LoopAction::Continue;
         }
-
-        if (!match) continue;
-
-        hits++;
-
-        log << "HIT[" << hits << "]\n";
-        log << "  name=" << name << "\n";
-        log << "  path=" << full << "\n";
-        log << "  class=" << cls << "\n";
-        log << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n\n";
-
-        if (hits >= 500) break;
-    }
+    );
 
     log << "scanned_objects=" << scanned << "\n";
     log << "hits=" << hits << "\n";
@@ -2582,15 +2602,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.8.0");
+        ModVersion = STR("1.8.1");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.8 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.8 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.8.1 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.8.1 on_unreal_init");
     }
 
     auto on_update() -> void override
