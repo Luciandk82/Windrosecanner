@@ -3736,6 +3736,224 @@ static void write_phase7g_long_sampling_campaign(UObject* trigger, int scan_atte
 }
 // END PHASE7G_LONG_SAMPLING_CAMPAIGN
 
+
+
+// BEGIN PHASE8A_LANDSCAPE_HEIGHTMAP_EXTRACTION
+
+static std::string phase8a_safe_string(UObject* o, const char* field_name)
+{
+    try
+    {
+        auto cls = o->GetClass();
+        if (!cls) return "";
+
+        auto prop = cls->FindPropertyByName(field_name);
+        if (!prop) return "";
+
+        return "[property_exists]";
+    }
+    catch (...)
+    {
+        return "[exception]";
+    }
+}
+
+static double phase8a_try_get_double(UObject* o, const char* field_name)
+{
+    try
+    {
+        auto cls = o->GetClass();
+        if (!cls) return -999999.0;
+
+        auto prop = cls->FindPropertyByName(field_name);
+        if (!prop) return -999999.0;
+
+        return 0.0;
+    }
+    catch (...)
+    {
+        return -999999.0;
+    }
+}
+
+static void write_phase8a_landscape_heightmap_extraction(UObject* trigger, int scan_attempt)
+{
+    static bool started = false;
+    static int passes = 0;
+
+    if (!trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    if (scan_attempt < 8) return;
+    if (passes >= 20) return;
+
+    passes++;
+
+    auto out = out_dir();
+
+    std::ofstream log(out / "phase8a_landscape_heightmap_extraction.txt", std::ios::app);
+    std::ofstream csv(out / "phase8a_landscape_components.csv", std::ios::app);
+    std::ofstream summary(out / "phase8a_summary.txt", std::ios::app);
+
+    if (!started)
+    {
+        started = true;
+
+        log << "Phase 8A Landscape/Heightmap extraction\n";
+        log << "mode=aggressive_multi_pass_landscape_component_scan\n";
+        log << "reference=WindrosePlus_terrain_v17_style_pipeline\n";
+        log << "goal=authoritative_world_map_reconstruction\n";
+        log << "note=no_large_raw_height_dumps_yet\n\n";
+
+        csv << "pass,scan_attempt,class,name,path,addr\n";
+    }
+
+    file_log("Phase 8A pass " + std::to_string(passes));
+
+    int scanned = 0;
+    int landscape_hits = 0;
+    int collision_hits = 0;
+    int landscape_proxy_hits = 0;
+    int terrain_related_hits = 0;
+
+    log << "===== PASS " << passes << " scan_attempt=" << scan_attempt << " =====\n";
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string full = obj_path(o);
+
+            bool interesting = false;
+
+            if (cls.find("Landscape") != std::string::npos) interesting = true;
+            if (cls.find("Heightfield") != std::string::npos) interesting = true;
+            if (cls.find("Terrain") != std::string::npos) interesting = true;
+            if (name.find("Landscape") != std::string::npos) interesting = true;
+            if (name.find("Terrain") != std::string::npos) interesting = true;
+            if (full.find("Landscape") != std::string::npos) interesting = true;
+            if (full.find("Terrain") != std::string::npos) interesting = true;
+
+            if (!interesting)
+                return RC::LoopAction::Continue;
+
+            terrain_related_hits++;
+
+            if (cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos)
+                collision_hits++;
+
+            if (cls.find("LandscapeProxy") != std::string::npos)
+                landscape_proxy_hits++;
+
+            if (cls.find("Landscape") != std::string::npos)
+                landscape_hits++;
+
+            uintptr_t addr = reinterpret_cast<uintptr_t>(o);
+
+            log << "OBJECT\n";
+            log << "  class=" << cls << "\n";
+            log << "  name=" << name << "\n";
+            log << "  path=" << full << "\n";
+            log << "  addr=0x" << std::hex << addr << std::dec << "\n";
+
+            csv
+                << passes << ","
+                << scan_attempt << ","
+                << "\"" << cls << "\","
+                << "\"" << name << "\","
+                << "\"" << full << "\","
+                << "\"0x" << std::hex << addr << std::dec << "\"\n";
+
+            // -------------------------------------------------------
+            // WindrosePlus-style metadata probing
+            // -------------------------------------------------------
+
+            try
+            {
+                auto cls_obj = o->GetClass();
+
+                if (cls_obj)
+                {
+                    log << "  class_path=" << obj_path(cls_obj) << "\n";
+
+                    const char* props[] = {
+                        "SectionBaseX",
+                        "SectionBaseY",
+                        "ComponentSizeQuads",
+                        "CollisionSizeQuads",
+                        "SubsectionSizeQuads",
+                        "NumSubsections",
+                        "CollisionScale",
+                        "SimpleCollisionSizeQuads",
+                        "CachedLocalBox",
+                        "HeightfieldGuid",
+                        "HeightfieldRef",
+                        "HeightmapTexture",
+                        "RenderTarget",
+                        "LandscapeMaterial",
+                        "LandscapeGuid",
+                        "LandscapeSectionOffset",
+                        "DrawScale",
+                        "RelativeScale3D",
+                        "RelativeLocation"
+                    };
+
+                    for (const char* prop_name : props)
+                    {
+                        auto prop = cls_obj->FindPropertyByName(prop_name);
+
+                        if (prop)
+                        {
+                            log << "  property_found=" << prop_name << "\n";
+                        }
+                    }
+                }
+            }
+            catch (...)
+            {
+                log << "  property_probe_exception=true\n";
+            }
+
+            log << "\n";
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    log << "PASS_SUMMARY\n";
+    log << "  scanned_objects=" << scanned << "\n";
+    log << "  terrain_related_hits=" << terrain_related_hits << "\n";
+    log << "  landscape_hits=" << landscape_hits << "\n";
+    log << "  collision_hits=" << collision_hits << "\n";
+    log << "  landscape_proxy_hits=" << landscape_proxy_hits << "\n";
+    log << "\n";
+
+    summary << "pass=" << passes
+            << " scan_attempt=" << scan_attempt
+            << " scanned=" << scanned
+            << " terrain_related=" << terrain_related_hits
+            << " landscape=" << landscape_hits
+            << " collision=" << collision_hits
+            << " proxy=" << landscape_proxy_hits
+            << "\n";
+
+    file_log(
+        "Phase 8A completed pass=" +
+        std::to_string(passes) +
+        " terrain_hits=" +
+        std::to_string(terrain_related_hits)
+    );
+}
+
+// END PHASE8A_LANDSCAPE_HEIGHTMAP_EXTRACTION
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -3800,7 +4018,8 @@ static void scan_render_targets()
             if (attempts >= 8)
             {
                 // disabled v1.10.1: write_phase7f_pixel_grid_sample(o);
-                write_phase7g_long_sampling_campaign(o, attempts);
+                // disabled v1.11.0: write_phase7g_long_sampling_campaign(o, attempts);
+                write_phase8a_landscape_heightmap_extraction(o, attempts);
             }
 
             return RC::LoopAction::Continue;
@@ -3817,15 +4036,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.10.1");
+        ModVersion = STR("1.11.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.10.1.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.10.1.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.11.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.11.0.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
