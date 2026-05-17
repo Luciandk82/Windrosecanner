@@ -2823,6 +2823,167 @@ static void write_phase7c1_context_object_discovery(UObject* trigger)
 }
 // END PHASE7C1_CONTEXT_OBJECT_DISCOVERY
 
+
+
+// BEGIN PHASE7D_EXPORT_RENDER_TARGET_ATTEMPT
+struct Phase7D_FString_Lite
+{
+    wchar_t* Data;
+    int32_t Num;
+    int32_t Max;
+};
+
+struct Phase7D_ExportRenderTarget_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    Phase7D_FString_Lite FilePath;
+    Phase7D_FString_Lite FileName;
+};
+
+static Phase7D_FString_Lite phase7d_make_fstring_lite(std::wstring& value)
+{
+    Phase7D_FString_Lite result{};
+    result.Data = const_cast<wchar_t*>(value.c_str());
+    result.Num = static_cast<int32_t>(value.size() + 1);
+    result.Max = static_cast<int32_t>(value.size() + 1);
+    return result;
+}
+
+static void write_phase7d_export_render_target_attempt(UObject* trigger)
+{
+    static int attempts = 0;
+    static bool success = false;
+
+    if (success || !trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    if (attempts >= 10) return;
+    attempts++;
+
+    auto out = out_dir();
+    std::ofstream log(out / "phase7d_export_render_target_attempt.txt", std::ios::app);
+
+    file_log("Phase 7D ExportRenderTarget attempt " + std::to_string(attempts) + " entered");
+
+    log << "===== Phase 7D ExportRenderTarget attempt " << attempts << " =====\n";
+    log << "trigger=" << trigger_path << "\n";
+    log << "mode=controlled_ProcessEvent_ExportRenderTarget_only\n";
+
+    UObject* default_kismet = nullptr;
+    UObject* rt_map_capture = nullptr;
+    UObject* persistent_level = nullptr;
+    UFunction* export_fn = nullptr;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o)
+            {
+                return RC::LoopAction::Continue;
+            }
+
+            scanned++;
+
+            std::string full = obj_path(o);
+            std::string cls = class_name(o);
+
+            if (!default_kismet && full.find("/Script/Engine.Default__KismetRenderingLibrary") != std::string::npos)
+            {
+                default_kismet = o;
+            }
+
+            if (!rt_map_capture && full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture") != std::string::npos)
+            {
+                rt_map_capture = o;
+            }
+
+            if (!persistent_level && cls == "Level" && full.find("PersistentLevel") != std::string::npos && full.find("/Game/Maps/") != std::string::npos)
+            {
+                persistent_level = o;
+            }
+
+            if (!export_fn && cls == "Function" && full.find("/Script/Engine.KismetRenderingLibrary:ExportRenderTarget") != std::string::npos)
+            {
+                export_fn = static_cast<UFunction*>(o);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    log << "scanned_objects=" << scanned << "\n";
+
+    auto log_obj = [&](const char* label, UObject* o)
+    {
+        log << label << "_found=" << (o ? "true" : "false") << "\n";
+
+        if (o)
+        {
+            log << label << "_path=" << obj_path(o) << "\n";
+            log << label << "_class=" << class_name(o) << "\n";
+            log << label << "_addr=0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\n";
+        }
+    };
+
+    log_obj("default_kismet", default_kismet);
+    log_obj("rt_map_capture", rt_map_capture);
+    log_obj("persistent_level", persistent_level);
+    log_obj("export_fn", reinterpret_cast<UObject*>(export_fn));
+
+    if (!default_kismet || !rt_map_capture || !export_fn)
+    {
+        log << "decision=skip_missing_required_object\n\n";
+        file_log("Phase 7D attempt " + std::to_string(attempts) + " skipped missing required object");
+        return;
+    }
+
+    UObject* world_context = persistent_level ? persistent_level : trigger;
+
+    std::wstring export_dir = L"Z:/home/pirat_king/windrose-server/R5/Binaries/Win64/windrose_plus_data/native_rt_export";
+    std::wstring export_name = L"phase7d_RT_MapCapture_attempt_" + std::to_wstring(attempts);
+
+    Phase7D_ExportRenderTarget_Params params{};
+    params.WorldContextObject = world_context;
+    params.TextureRenderTarget = rt_map_capture;
+    params.FilePath = phase7d_make_fstring_lite(export_dir);
+    params.FileName = phase7d_make_fstring_lite(export_name);
+
+    log << "world_context_path=" << obj_path(world_context) << "\n";
+    log << "export_dir=Z:/home/pirat_king/windrose-server/R5/Binaries/Win64/windrose_plus_data/native_rt_export\n";
+    log << "export_name=phase7d_RT_MapCapture_attempt_" << attempts << "\n";
+    log << "about_to_call_ProcessEvent=true\n";
+    log.flush();
+
+    default_kismet->ProcessEvent(export_fn, &params);
+
+    log << "after_ProcessEvent=true\n";
+
+    bool png_exists = std::filesystem::exists(out / ("phase7d_RT_MapCapture_attempt_" + std::to_string(attempts) + ".png"));
+    bool hdr_exists = std::filesystem::exists(out / ("phase7d_RT_MapCapture_attempt_" + std::to_string(attempts) + ".hdr"));
+    bool exr_exists = std::filesystem::exists(out / ("phase7d_RT_MapCapture_attempt_" + std::to_string(attempts) + ".exr"));
+
+    log << "png_exists=" << (png_exists ? "true" : "false") << "\n";
+    log << "hdr_exists=" << (hdr_exists ? "true" : "false") << "\n";
+    log << "exr_exists=" << (exr_exists ? "true" : "false") << "\n";
+
+    if (png_exists || hdr_exists || exr_exists)
+    {
+        success = true;
+        log << "result=success_file_created\n\n";
+        file_log("Phase 7D ExportRenderTarget SUCCESS attempt " + std::to_string(attempts));
+        return;
+    }
+
+    log << "result=no_file_detected_after_call\n\n";
+    file_log("Phase 7D ExportRenderTarget attempt " + std::to_string(attempts) + " completed no file detected");
+}
+// END PHASE7D_EXPORT_RENDER_TARGET_ATTEMPT
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -2879,6 +3040,7 @@ static void scan_render_targets()
             write_phase7a_ue_runtime_readback_discovery(o);
             write_phase7b_ufunction_signature_dump(o);
             write_phase7c1_context_object_discovery(o);
+            write_phase7d_export_render_target_attempt(o);
 
             return RC::LoopAction::Continue;
         }
@@ -2894,15 +3056,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.6");
+        ModVersion = STR("1.9.7");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.6.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.6.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.7.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.7.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
