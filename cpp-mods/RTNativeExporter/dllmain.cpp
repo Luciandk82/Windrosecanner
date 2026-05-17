@@ -3476,11 +3476,271 @@ static void write_phase7f_pixel_grid_sample(UObject* trigger)
 }
 // END PHASE7F_PIXEL_GRID_SAMPLE
 
+
+
+// BEGIN PHASE7G_LONG_SAMPLING_CAMPAIGN
+struct Phase7G_Color
+{
+    uint8_t B;
+    uint8_t G;
+    uint8_t R;
+    uint8_t A;
+};
+
+struct Phase7G_LinearColor
+{
+    float R;
+    float G;
+    float B;
+    float A;
+};
+
+struct Phase7G_ReadPixel_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    int32_t X;
+    int32_t Y;
+    Phase7G_Color ReturnValue;
+};
+
+struct Phase7G_ReadRawPixel_Params
+{
+    UObject* WorldContextObject;
+    UObject* TextureRenderTarget;
+    int32_t X;
+    int32_t Y;
+    Phase7G_LinearColor ReturnValue;
+};
+
+static void write_phase7g_long_sampling_campaign(UObject* trigger, int scan_attempt)
+{
+    static bool header_written = false;
+    static int passes = 0;
+
+    if (!trigger) return;
+
+    std::string trigger_path = obj_path(trigger);
+    if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
+
+    if (scan_attempt < 8) return;
+    if (passes >= 20) return;
+
+    passes++;
+
+    auto out = out_dir();
+    std::ofstream log(out / "phase7g_long_sampling_campaign.txt", std::ios::app);
+    std::ofstream csv(out / "phase7g_long_sampling_campaign.csv", std::ios::app);
+
+    if (!header_written)
+    {
+        log << "Phase 7G long sampling campaign\n";
+        log << "mode=20_passes_over_late_scan_attempts_multi_target_multi_method\n";
+        log << "note=no_large_TArray_no_raw_bin_no_ExportRenderTarget\n\n";
+
+        csv << "pass,scan_attempt,target_label,target_path,method,sample_label,x,y,r,g,b,a,raw_r,raw_g,raw_b,raw_a\n";
+        header_written = true;
+    }
+
+    file_log("Phase 7G long sampling campaign pass " + std::to_string(passes) + " scan_attempt " + std::to_string(scan_attempt));
+
+    UObject* default_kismet = nullptr;
+    UObject* rt_map_capture = nullptr;
+    UObject* rt_map_fog = nullptr;
+    UObject* rt_wetness = nullptr;
+    UObject* rt_overlap = nullptr;
+    UObject* rt_surface_height = nullptr;
+    UObject* persistent_level = nullptr;
+
+    UFunction* read_pixel_fn = nullptr;
+    UFunction* read_raw_pixel_fn = nullptr;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string full = obj_path(o);
+            std::string cls = class_name(o);
+
+            if (!default_kismet && full.find("/Script/Engine.Default__KismetRenderingLibrary") != std::string::npos)
+                default_kismet = o;
+
+            if (!rt_map_capture && full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapCapture.RT_MapCapture") != std::string::npos)
+                rt_map_capture = o;
+
+            if (!rt_map_fog && full.find("/Game/UI/META/FullscreenMap/Assets/RT_MapFog.RT_MapFog") != std::string::npos)
+                rt_map_fog = o;
+
+            if (!rt_wetness && full.find("/R5Nature/Rain/RT_WetnessMask.RT_WetnessMask") != std::string::npos)
+                rt_wetness = o;
+
+            if (!rt_overlap && full.find("/R5Nature/Rain/RT_OverlapMask.RT_OverlapMask") != std::string::npos)
+                rt_overlap = o;
+
+            if (!rt_surface_height && full.find("/R5Nature/Rain/RT_SurfaceHeight.RT_SurfaceHeight") != std::string::npos)
+                rt_surface_height = o;
+
+            if (!persistent_level && cls == "Level" && full.find("PersistentLevel") != std::string::npos && full.find("/Game/Maps/") != std::string::npos)
+                persistent_level = o;
+
+            if (cls == "Function")
+            {
+                if (!read_pixel_fn && full.find("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetPixel") != std::string::npos)
+                    read_pixel_fn = static_cast<UFunction*>(o);
+
+                if (!read_raw_pixel_fn && full.find("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawPixel") != std::string::npos)
+                    read_raw_pixel_fn = static_cast<UFunction*>(o);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    log << "PASS " << passes << " scan_attempt=" << scan_attempt << "\n";
+    log << "scanned_objects=" << scanned << "\n";
+    log << "default_kismet_found=" << (default_kismet ? "true" : "false") << "\n";
+    log << "persistent_level_found=" << (persistent_level ? "true" : "false") << "\n";
+    log << "read_pixel_fn_found=" << (read_pixel_fn ? "true" : "false") << "\n";
+    log << "read_raw_pixel_fn_found=" << (read_raw_pixel_fn ? "true" : "false") << "\n";
+
+    if (!default_kismet || !persistent_level || !read_pixel_fn)
+    {
+        log << "decision=skip_missing_required_objects\n\n";
+        return;
+    }
+
+    struct TargetCandidate
+    {
+        const char* label;
+        UObject* object;
+    };
+
+    TargetCandidate targets[] = {
+        {"RT_MapCapture", rt_map_capture},
+        {"RT_MapFog", rt_map_fog},
+        {"RT_WetnessMask", rt_wetness},
+        {"RT_OverlapMask", rt_overlap},
+        {"RT_SurfaceHeight", rt_surface_height}
+    };
+
+    struct SamplePoint
+    {
+        const char* label;
+        int x;
+        int y;
+    };
+
+    SamplePoint samples[] = {
+        {"top_left", 64, 64},
+        {"top_center", 1024, 64},
+        {"top_right", 1984, 64},
+        {"mid_left", 64, 1024},
+        {"center", 1024, 1024},
+        {"mid_right", 1984, 1024},
+        {"bottom_left", 64, 1984},
+        {"bottom_center", 1024, 1984},
+        {"bottom_right", 1984, 1984},
+        {"q1", 512, 512},
+        {"q2", 1536, 512},
+        {"q3", 512, 1536},
+        {"q4", 1536, 1536}
+    };
+
+    int total_calls = 0;
+    int non_red_pixel = 0;
+    int non_black_pixel = 0;
+
+    for (const auto& target : targets)
+    {
+        if (!target.object)
+        {
+            log << "target_missing=" << target.label << "\n";
+            continue;
+        }
+
+        std::string target_path = obj_path(target.object);
+        log << "target=" << target.label << " path=" << target_path << "\n";
+
+        for (const auto& sample : samples)
+        {
+            Phase7G_ReadPixel_Params p0{};
+            p0.WorldContextObject = persistent_level;
+            p0.TextureRenderTarget = target.object;
+            p0.X = sample.x;
+            p0.Y = sample.y;
+
+            default_kismet->ProcessEvent(read_pixel_fn, &p0);
+            total_calls++;
+
+            int r = static_cast<int>(p0.ReturnValue.R);
+            int g = static_cast<int>(p0.ReturnValue.G);
+            int b = static_cast<int>(p0.ReturnValue.B);
+            int a = static_cast<int>(p0.ReturnValue.A);
+
+            if (!(r == 255 && g == 0 && b == 0 && a == 255)) non_red_pixel++;
+            if (r != 0 || g != 0 || b != 0) non_black_pixel++;
+
+            float rr = -999.0f;
+            float rg = -999.0f;
+            float rb = -999.0f;
+            float ra = -999.0f;
+
+            if (read_raw_pixel_fn)
+            {
+                Phase7G_ReadRawPixel_Params p1{};
+                p1.WorldContextObject = persistent_level;
+                p1.TextureRenderTarget = target.object;
+                p1.X = sample.x;
+                p1.Y = sample.y;
+
+                default_kismet->ProcessEvent(read_raw_pixel_fn, &p1);
+                total_calls++;
+
+                rr = p1.ReturnValue.R;
+                rg = p1.ReturnValue.G;
+                rb = p1.ReturnValue.B;
+                ra = p1.ReturnValue.A;
+            }
+
+            csv << passes << ","
+                << scan_attempt << ","
+                << target.label << ","
+                << target_path << ","
+                << "pixel_and_raw" << ","
+                << sample.label << ","
+                << sample.x << ","
+                << sample.y << ","
+                << r << ","
+                << g << ","
+                << b << ","
+                << a << ","
+                << rr << ","
+                << rg << ","
+                << rb << ","
+                << ra << "\n";
+        }
+    }
+
+    log << "total_process_event_calls=" << total_calls << "\n";
+    log << "non_red_pixel_samples=" << non_red_pixel << "\n";
+    log << "non_black_pixel_samples=" << non_black_pixel << "\n";
+    log << "csv_file=phase7g_long_sampling_campaign.csv\n";
+    log << "pass_result=completed\n\n";
+
+    file_log("Phase 7G pass " + std::to_string(passes) + " completed non_red=" + std::to_string(non_red_pixel));
+}
+// END PHASE7G_LONG_SAMPLING_CAMPAIGN
+
 static void scan_render_targets()
 {
     static int attempts = 0;
 
-    if (attempts >= 12)
+    if (attempts >= 36)
     {
         return;
     }
@@ -3539,7 +3799,8 @@ static void scan_render_targets()
             // world can load, and fullscreen map can initialize RT_MapCapture.
             if (attempts >= 8)
             {
-                write_phase7f_pixel_grid_sample(o);
+                // disabled v1.10.1: write_phase7f_pixel_grid_sample(o);
+                write_phase7g_long_sampling_campaign(o, attempts);
             }
 
             return RC::LoopAction::Continue;
@@ -3556,15 +3817,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.10.0");
+        ModVersion = STR("1.10.1");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.10.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.10.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.10.1.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.10.1.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
