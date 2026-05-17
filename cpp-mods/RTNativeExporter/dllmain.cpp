@@ -3362,8 +3362,15 @@ static void scan_render_targets()
             write_phase7a_ue_runtime_readback_discovery(o);
             write_phase7b_ufunction_signature_dump(o);
             write_phase7c1_context_object_discovery(o);
-            write_phase7d_export_render_target_attempt(o);
-            write_phase7e_combined_export_strategy(o);
+            // Phase 7D disabled in v1.9.9. Phase 7E supersedes it.
+            // write_phase7d_export_render_target_attempt(o);
+
+            // Delay Phase 7E until later scan attempts so player can log in,
+            // world can load, and fullscreen map can initialize RT_MapCapture.
+            if (attempts >= 8)
+            {
+                write_phase7e_combined_export_strategy(o);
+            }
 
             return RC::LoopAction::Continue;
         }
@@ -3379,15 +3386,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.8");
+        ModVersion = STR("1.9.9");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.8.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.8.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.9.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.9.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
