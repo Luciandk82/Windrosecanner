@@ -2554,27 +2554,8 @@ static bool phase7b_is_target_function(const std::string& full)
 static void phase7b_write_uobject_memory_preview(std::ofstream& log, UObject* o)
 {
     if (!o) return;
-
-    uint8_t* base = reinterpret_cast<uint8_t*>(o);
-
-    log << "  memory_preview_256=";
-
-    __try
-    {
-        for (int i = 0; i < 256; ++i)
-        {
-            unsigned int b = static_cast<unsigned int>(base[i]);
-            const char* hex = "0123456789ABCDEF";
-            log << hex[(b >> 4) & 0xF] << hex[b & 0xF];
-            if ((i + 1) % 16 == 0) log << " ";
-        }
-    }
-    __except(EXCEPTION_EXECUTE_HANDLER)
-    {
-        log << "EXCEPTION_WHILE_READING";
-    }
-
-    log << "\n";
+    log << "  memory_preview_256=disabled_in_v1.9.1_due_to_MSVC_C2712_SEH_unwind_rule
+";
 }
 
 static void write_phase7b_ufunction_signature_dump(UObject* trigger)
@@ -2809,15 +2790,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.0");
+        ModVersion = STR("1.9.1");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.1.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.1.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
