@@ -2639,13 +2639,14 @@ static void scan_render_targets()
         write_deep_pointer_probe(o);
         write_targeted_chain_probe(o);
         // DISABLED v1.8.2: legacy Phase 6C probe
-        // write_phase6c_vtable_diagnostic(o);
-        // disabled in Phase 7A fast scan: write_phase6d_raw_candidate_dump(o);
-        // disabled in Phase 7A fast scan: write_phase6e_small_candidate_dumps(o);
+        // // DISABLED v1.9.3 cleanup: write_phase6c_vtable_diagnostic(o);
+        // disabled in Phase 7A fast scan: // DISABLED v1.9.3 cleanup: write_phase6d_raw_candidate_dump(o);
+        // disabled in Phase 7A fast scan: // DISABLED v1.9.3 cleanup: write_phase6e_small_candidate_dumps(o);
+        // disabled in Phase 7A fast scan: // DISABLED v1.9.3 cleanup: write_phase6f_aggressive_resource_dump(o);
+
+
         write_phase7a_ue_runtime_readback_discovery(o);
         write_phase7b_ufunction_signature_dump(o);
-        // disabled in Phase 7A fast scan: write_phase6f_aggressive_resource_dump(o);
-
         if (!first) json << ",\n";
         first = false;
 
@@ -2702,15 +2703,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.9.2");
+        ModVersion = STR("1.9.3");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.2.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.9.2.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.9.3.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.9.3.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
