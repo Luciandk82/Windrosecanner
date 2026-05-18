@@ -6260,7 +6260,7 @@ static void write_phase8h_world_reconstruction_snapshot(int run, int delay_secon
                     ? phase8h_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_")
                     : phase8h_extract_int_after(path, "LandscapeComponent_");
 
-                # confirmed Phase 8G offsets
+                // confirmed Phase 8G offsets
                 c.section_x = phase8h_i32(base, 1296);
                 c.section_y = phase8h_i32(base, 1300);
 
@@ -6280,7 +6280,7 @@ static void write_phase8h_world_reconstruction_snapshot(int run, int delay_secon
                     << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\","
                     << "\"" << c.path << "\"\n";
 
-                # targeted pointer hints
+                // targeted pointer hints
                 const size_t ptr_offsets[] = {
                     1684,1688,1732,1740,1748,1752,1760,
                     1880,1888,1944,1952,
@@ -6322,7 +6322,7 @@ static void write_phase8h_world_reconstruction_snapshot(int run, int delay_secon
                 a.path = path;
                 a.obj = o;
 
-                # broad transform probing
+                // broad transform probing
                 a.x = phase8h_f32(base, 656);
                 a.y = phase8h_f32(base, 660);
                 a.z = phase8h_f32(base, 664);
@@ -6424,7 +6424,7 @@ static void write_phase8h_world_reconstruction_snapshot(int run, int delay_secon
         int grid_x = static_cast<int>(b.xs.size());
         int grid_y = static_cast<int>(b.ys.size());
 
-        # provisional world placement guess
+        // provisional world placement guess
         int world_guess_x = b.minx * spacing_x;
         int world_guess_y = b.miny * spacing_y;
 
