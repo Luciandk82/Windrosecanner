@@ -11,6 +11,8 @@
 #include <tlhelp32.h>
 
 #include <fstream>
+#include <thread>
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -4635,6 +4637,260 @@ static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger,
 }
 // END PHASE8C_COMPONENT_LAYOUT_AND_TINY_RAW_PROBES
 
+
+
+// BEGIN PHASE8D_INDEPENDENT_LANDSCAPE_WATCHDOG
+static void write_phase8d_independent_landscape_watchdog_snapshot(int watchdog_run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream log(out / "phase8d_independent_landscape_watchdog.txt", std::ios::app);
+    std::ofstream csv(out / "phase8d_landscape_runtime_snapshot.csv", std::ios::app);
+
+    if (watchdog_run == 1)
+    {
+        csv << "run,delay_seconds,kind,class,name,path,addr,landscape_id,component_id\n";
+    }
+
+    file_log("Phase 8D watchdog snapshot begin run=" + std::to_string(watchdog_run) + " delay=" + std::to_string(delay_seconds));
+
+    log << "\n===== PHASE 8D WATCHDOG RUN " << watchdog_run << " DELAY " << delay_seconds << "s =====\n";
+
+    struct Rec
+    {
+        std::string kind;
+        std::string cls;
+        std::string name;
+        std::string path;
+        uintptr_t addr;
+        int landscape_id;
+        int component_id;
+        UObject* obj;
+    };
+
+    auto extract_int_after = [](const std::string& text, const std::string& token) -> int
+    {
+        size_t pos = text.rfind(token);
+        if (pos == std::string::npos) return -1;
+
+        pos += token.size();
+
+        std::string digits;
+        while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+        {
+            digits.push_back(text[pos]);
+            pos++;
+        }
+
+        if (digits.empty()) return -1;
+
+        try
+        {
+            return std::stoi(digits);
+        }
+        catch (...)
+        {
+            return -1;
+        }
+    };
+
+    int scanned = 0;
+    int runtime_persistent = 0;
+    int collision_count = 0;
+    int component_count = 0;
+    int actor_count = 0;
+    int other_count = 0;
+
+    std::vector<Rec> records;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool is_runtime_persistent =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!is_runtime_persistent) return RC::LoopAction::Continue;
+
+            runtime_persistent++;
+
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
+
+            bool landscape_related =
+                cls.find("Landscape") != std::string::npos ||
+                name.find("Landscape") != std::string::npos ||
+                path.find("Landscape") != std::string::npos;
+
+            if (!landscape_related) return RC::LoopAction::Continue;
+
+            std::string kind = "other_landscape";
+
+            if (cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos)
+            {
+                kind = "collision";
+                collision_count++;
+            }
+            else if (cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos)
+            {
+                kind = "landscape_component";
+                component_count++;
+            }
+            else if (cls == "Landscape" || cls == "LandscapeProxy" || cls == "LandscapeStreamingProxy")
+            {
+                kind = "landscape_actor";
+                actor_count++;
+            }
+            else
+            {
+                other_count++;
+            }
+
+            Rec r{};
+            r.kind = kind;
+            r.cls = cls;
+            r.name = name;
+            r.path = path;
+            r.addr = reinterpret_cast<uintptr_t>(o);
+            r.landscape_id = extract_int_after(path, "Landscape_");
+            r.component_id = extract_int_after(path, "LandscapeHeightfieldCollisionComponent_");
+
+            if (r.component_id < 0)
+            {
+                r.component_id = extract_int_after(path, "LandscapeComponent_");
+            }
+
+            r.obj = o;
+
+            records.push_back(r);
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(records.begin(), records.end(), [](const Rec& a, const Rec& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        if (a.component_id != b.component_id) return a.component_id < b.component_id;
+        if (a.kind != b.kind) return a.kind < b.kind;
+        return a.path < b.path;
+    });
+
+    std::map<int, int> landscape_counts;
+    for (const auto& r : records)
+    {
+        if (r.landscape_id >= 0)
+        {
+            landscape_counts[r.landscape_id]++;
+        }
+
+        csv << watchdog_run << ","
+            << delay_seconds << ","
+            << "\"" << r.kind << "\","
+            << "\"" << r.cls << "\","
+            << "\"" << r.name << "\","
+            << "\"" << r.path << "\","
+            << "\"0x" << std::hex << r.addr << std::dec << "\","
+            << r.landscape_id << ","
+            << r.component_id << "\n";
+    }
+
+    log << "SUMMARY\n";
+    log << "  scanned_objects=" << scanned << "\n";
+    log << "  runtime_persistent_objects=" << runtime_persistent << "\n";
+    log << "  records=" << records.size() << "\n";
+    log << "  collision_count=" << collision_count << "\n";
+    log << "  landscape_component_count=" << component_count << "\n";
+    log << "  landscape_actor_count=" << actor_count << "\n";
+    log << "  other_landscape_count=" << other_count << "\n";
+    log << "  unique_landscape_ids=" << landscape_counts.size() << "\n";
+
+    if (collision_count > 0 && component_count > 0)
+    {
+        log << "DECISION=runtime_landscape_loaded\n";
+    }
+    else
+    {
+        log << "DECISION=runtime_landscape_not_loaded_yet\n";
+    }
+
+    log << "\nLANDSCAPE_COUNTS_FIRST_80\n";
+    int shown = 0;
+    for (const auto& kv : landscape_counts)
+    {
+        log << "  Landscape_" << kv.first << "=" << kv.second << "\n";
+        shown++;
+        if (shown >= 80) break;
+    }
+
+    log << "\nSAMPLE_FIRST_40\n";
+    int sample = 0;
+    for (const auto& r : records)
+    {
+        log << "RECORD kind=" << r.kind
+            << " class=" << r.cls
+            << " name=" << r.name
+            << " landscape_id=" << r.landscape_id
+            << " component_id=" << r.component_id
+            << " path=" << r.path
+            << "\n";
+
+        sample++;
+        if (sample >= 40) break;
+    }
+
+    file_log(
+        "Phase 8D watchdog snapshot done run=" +
+        std::to_string(watchdog_run) +
+        " scanned=" +
+        std::to_string(scanned) +
+        " collisions=" +
+        std::to_string(collision_count) +
+        " components=" +
+        std::to_string(component_count)
+    );
+}
+
+static void start_phase8d_independent_landscape_watchdog()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 8D independent watchdog started");
+
+    std::thread([]()
+    {
+        const int delays[] = {60, 120, 180, 240, 300, 420, 600};
+
+        int previous = 0;
+
+        for (int i = 0; i < 7; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase8d_independent_landscape_watchdog_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 8D independent watchdog finished");
+    }).detach();
+}
+// END PHASE8D_INDEPENDENT_LANDSCAPE_WATCHDOG
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -4721,15 +4977,16 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.13.3");
+        ModVersion = STR("1.14.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.13.3.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.13.3.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.14.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.14.0.2.2 on_unreal_init");
+        start_phase8d_independent_landscape_watchdog();
     }
 
     auto on_update() -> void override
