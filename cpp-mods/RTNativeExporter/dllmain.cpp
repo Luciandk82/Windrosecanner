@@ -6074,6 +6074,435 @@ static void start_phase8g_grid_and_section_confirmation()
 }
 // END PHASE8G_GRID_AND_SECTION_CONFIRMATION
 
+
+
+// BEGIN PHASE8H_WORLD_RECONSTRUCTION
+
+static int32_t phase8h_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static float phase8h_f32(uint8_t* base, size_t off)
+{
+    float v = 0.f;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase8h_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase8h_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static int phase8h_extract_int_after(const std::string& text, const std::string& token)
+{
+    size_t pos = text.rfind(token);
+    if (pos == std::string::npos) return -1;
+
+    pos += token.size();
+
+    std::string digits;
+
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+    {
+        digits.push_back(text[pos]);
+        pos++;
+    }
+
+    if (digits.empty()) return -1;
+
+    try
+    {
+        return std::stoi(digits);
+    }
+    catch (...)
+    {
+        return -1;
+    }
+}
+
+static void write_phase8h_world_reconstruction_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase8h_summary.txt", std::ios::app);
+    std::ofstream compcsv(out / "phase8h_confirmed_components.csv", std::ios::app);
+    std::ofstream actorcsv(out / "phase8h_landscape_actor_candidates.csv", std::ios::app);
+    std::ofstream boundscsv(out / "phase8h_island_global_bounds.csv", std::ios::app);
+    std::ofstream ptrcsv(out / "phase8h_height_pointer_hints.csv", std::ios::app);
+
+    if (run == 1)
+    {
+        compcsv <<
+        "run,delay_seconds,kind,landscape_id,component_id,"
+        "section_x,section_y,"
+        "obj_addr,path\n";
+
+        actorcsv <<
+        "run,delay_seconds,landscape_id,class,name,"
+        "actor_x,actor_y,actor_z,"
+        "rot_x,rot_y,rot_z,"
+        "scale_x,scale_y,scale_z,"
+        "path,obj_addr\n";
+
+        boundscsv <<
+        "run,delay_seconds,landscape_id,"
+        "count,min_x,max_x,min_y,max_y,"
+        "grid_x,grid_y,"
+        "spacing_x,spacing_y,"
+        "world_guess_x,world_guess_y\n";
+
+        ptrcsv <<
+        "run,delay_seconds,kind,landscape_id,component_id,"
+        "ptr_offset,ptr_value,"
+        "near0,near4,near8,near12,"
+        "path\n";
+    }
+
+    struct Comp
+    {
+        std::string kind;
+        int landscape_id = -1;
+        int component_id = -1;
+        int32_t section_x = 0;
+        int32_t section_y = 0;
+        std::string path;
+        UObject* obj = nullptr;
+    };
+
+    struct Actor
+    {
+        int landscape_id = -1;
+        std::string cls;
+        std::string name;
+        std::string path;
+        UObject* obj = nullptr;
+
+        float x = 0;
+        float y = 0;
+        float z = 0;
+
+        float rx = 0;
+        float ry = 0;
+        float rz = 0;
+
+        float sx = 0;
+        float sy = 0;
+        float sz = 0;
+    };
+
+    std::vector<Comp> comps;
+    std::vector<Actor> actors;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool runtime =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!runtime) return RC::LoopAction::Continue;
+
+            if (path.find("Default__") != std::string::npos)
+                return RC::LoopAction::Continue;
+
+            bool is_collision =
+                cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+
+            bool is_component =
+                cls == "LandscapeComponent" ||
+                cls.find("LandscapeComponent") != std::string::npos;
+
+            bool is_actor =
+                cls == "Landscape" ||
+                cls == "LandscapeProxy" ||
+                cls == "LandscapeStreamingProxy";
+
+            int landscape_id =
+                phase8h_extract_int_after(path, "Landscape_");
+
+            if (is_collision || is_component)
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(o);
+
+                Comp c{};
+
+                c.kind = is_collision ? "collision" : "component";
+                c.landscape_id = landscape_id;
+
+                c.component_id =
+                    is_collision
+                    ? phase8h_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_")
+                    : phase8h_extract_int_after(path, "LandscapeComponent_");
+
+                # confirmed Phase 8G offsets
+                c.section_x = phase8h_i32(base, 1296);
+                c.section_y = phase8h_i32(base, 1300);
+
+                c.path = path;
+                c.obj = o;
+
+                comps.push_back(c);
+
+                compcsv
+                    << run << ","
+                    << delay_seconds << ","
+                    << c.kind << ","
+                    << c.landscape_id << ","
+                    << c.component_id << ","
+                    << c.section_x << ","
+                    << c.section_y << ","
+                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\","
+                    << "\"" << c.path << "\"\n";
+
+                # targeted pointer hints
+                const size_t ptr_offsets[] = {
+                    1684,1688,1732,1740,1748,1752,1760,
+                    1880,1888,1944,1952,
+                    2000,2020,2040,2060,2080,2120
+                };
+
+                for (size_t poff : ptr_offsets)
+                {
+                    uintptr_t ptr = phase8h_ptr(base, poff);
+
+                    if (!phase8h_probably_ptr(ptr))
+                        continue;
+
+                    ptrcsv
+                        << run << ","
+                        << delay_seconds << ","
+                        << c.kind << ","
+                        << c.landscape_id << ","
+                        << c.component_id << ","
+                        << poff << ","
+                        << "\"0x" << std::hex << ptr << std::dec << "\","
+                        << phase8h_i32(base, poff + 0) << ","
+                        << phase8h_i32(base, poff + 4) << ","
+                        << phase8h_i32(base, poff + 8) << ","
+                        << phase8h_i32(base, poff + 12) << ","
+                        << "\"" << c.path << "\"\n";
+                }
+            }
+
+            if (is_actor)
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(o);
+
+                Actor a{};
+
+                a.landscape_id = landscape_id;
+                a.cls = cls;
+                a.name = name;
+                a.path = path;
+                a.obj = o;
+
+                # broad transform probing
+                a.x = phase8h_f32(base, 656);
+                a.y = phase8h_f32(base, 660);
+                a.z = phase8h_f32(base, 664);
+
+                a.rx = phase8h_f32(base, 668);
+                a.ry = phase8h_f32(base, 672);
+                a.rz = phase8h_f32(base, 676);
+
+                a.sx = phase8h_f32(base, 680);
+                a.sy = phase8h_f32(base, 684);
+                a.sz = phase8h_f32(base, 688);
+
+                actors.push_back(a);
+
+                actorcsv
+                    << run << ","
+                    << delay_seconds << ","
+                    << a.landscape_id << ","
+                    << "\"" << a.cls << "\","
+                    << "\"" << a.name << "\","
+                    << a.x << ","
+                    << a.y << ","
+                    << a.z << ","
+                    << a.rx << ","
+                    << a.ry << ","
+                    << a.rz << ","
+                    << a.sx << ","
+                    << a.sy << ","
+                    << a.sz << ","
+                    << "\"" << a.path << "\","
+                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\"\n";
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    summary << "\n===== PHASE 8H RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "components=" << comps.size() << "\n";
+    summary << "actors=" << actors.size() << "\n";
+
+    struct Bounds
+    {
+        int count = 0;
+
+        int minx = INT32_MAX;
+        int maxx = INT32_MIN;
+
+        int miny = INT32_MAX;
+        int maxy = INT32_MIN;
+
+        std::set<int> xs;
+        std::set<int> ys;
+    };
+
+    std::map<int, Bounds> island_bounds;
+
+    for (const auto& c : comps)
+    {
+        auto& b = island_bounds[c.landscape_id];
+
+        b.count++;
+
+        b.minx = std::min(b.minx, c.section_x);
+        b.maxx = std::max(b.maxx, c.section_x);
+
+        b.miny = std::min(b.miny, c.section_y);
+        b.maxy = std::max(b.maxy, c.section_y);
+
+        b.xs.insert(c.section_x);
+        b.ys.insert(c.section_y);
+    }
+
+    for (const auto& kv : island_bounds)
+    {
+        int lid = kv.first;
+        const auto& b = kv.second;
+
+        int spacing_x = 0;
+        int spacing_y = 0;
+
+        if (b.xs.size() >= 2)
+        {
+            auto it = b.xs.begin();
+            int a = *it++;
+            int bb = *it;
+            spacing_x = bb - a;
+        }
+
+        if (b.ys.size() >= 2)
+        {
+            auto it = b.ys.begin();
+            int a = *it++;
+            int bb = *it;
+            spacing_y = bb - a;
+        }
+
+        int grid_x = static_cast<int>(b.xs.size());
+        int grid_y = static_cast<int>(b.ys.size());
+
+        # provisional world placement guess
+        int world_guess_x = b.minx * spacing_x;
+        int world_guess_y = b.miny * spacing_y;
+
+        boundscsv
+            << run << ","
+            << delay_seconds << ","
+            << lid << ","
+            << b.count << ","
+            << b.minx << ","
+            << b.maxx << ","
+            << b.miny << ","
+            << b.maxy << ","
+            << grid_x << ","
+            << grid_y << ","
+            << spacing_x << ","
+            << spacing_y << ","
+            << world_guess_x << ","
+            << world_guess_y
+            << "\n";
+
+        summary
+            << "Landscape_" << lid
+            << " count=" << b.count
+            << " grid=" << grid_x << "x" << grid_y
+            << " x=[" << b.minx << "," << b.maxx << "]"
+            << " y=[" << b.miny << "," << b.maxy << "]"
+            << " spacing=" << spacing_x << "/" << spacing_y
+            << "\n";
+    }
+
+    summary << "DECISION=world_reconstruction_active\n";
+
+    file_log(
+        "Phase 8H done run=" +
+        std::to_string(run) +
+        " comps=" +
+        std::to_string(comps.size()) +
+        " actors=" +
+        std::to_string(actors.size())
+    );
+}
+
+static void start_phase8h_world_reconstruction()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 8H world reconstruction started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360, 600};
+
+        int previous = 0;
+
+        for (int i = 0; i < 3; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase8h_world_reconstruction_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 8H world reconstruction finished");
+    }).detach();
+}
+
+// END PHASE8H_WORLD_RECONSTRUCTION
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -6160,19 +6589,20 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.17.0");
+        ModVersion = STR("1.18.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.17.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.17.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.18.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.18.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
-        start_phase8g_grid_and_section_confirmation();
+        // disabled v1.18.0: start_phase8g_grid_and_section_confirmation();
+        start_phase8h_world_reconstruction();
     }
 
     auto on_update() -> void override
