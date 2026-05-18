@@ -6076,32 +6076,39 @@ static void start_phase8g_grid_and_section_confirmation()
 
 
 
-// BEGIN PHASE8H_WORLD_RECONSTRUCTION
 
-static int32_t phase8h_i32(uint8_t* base, size_t off)
+
+
+
+
+// BEGIN PHASE8H2_SAFE_WORLD_BOUNDS
+
+static int32_t phase8h2_i32(uint8_t* base, size_t off)
 {
     int32_t v = 0;
     std::memcpy(&v, base + off, sizeof(v));
     return v;
 }
 
-static float phase8h_f32(uint8_t* base, size_t off)
+static float phase8h2_f32(uint8_t* base, size_t off)
 {
     float v = 0.f;
     std::memcpy(&v, base + off, sizeof(v));
     return v;
 }
 
-static uintptr_t phase8h_ptr(uint8_t* base, size_t off)
+static uintptr_t phase8h2_ptr(uint8_t* base, size_t off)
 {
     uintptr_t v = 0;
     std::memcpy(&v, base + off, sizeof(v));
     return v;
 }
 
-static bool phase8h_probably_ptr(uintptr_t v)
+static bool phase8h2_probably_ptr(uintptr_t v)
 {
     if (v < 0x10000ULL) return false;
+    if (v == 0xffffffffULL) return false;
+    if (v == 0xffffffffffffffffULL) return false;
     if (v == 0xccccccccccccccccULL) return false;
     if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
     if (v == 0xddddddddddddddddULL) return false;
@@ -6109,7 +6116,7 @@ static bool phase8h_probably_ptr(uintptr_t v)
     return true;
 }
 
-static int phase8h_extract_int_after(const std::string& text, const std::string& token)
+static int phase8h2_extract_int_after(const std::string& text, const std::string& token)
 {
     size_t pos = text.rfind(token);
     if (pos == std::string::npos) return -1;
@@ -6117,7 +6124,6 @@ static int phase8h_extract_int_after(const std::string& text, const std::string&
     pos += token.size();
 
     std::string digits;
-
     while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
     {
         digits.push_back(text[pos]);
@@ -6126,57 +6132,58 @@ static int phase8h_extract_int_after(const std::string& text, const std::string&
 
     if (digits.empty()) return -1;
 
-    try
-    {
-        return std::stoi(digits);
-    }
-    catch (...)
-    {
-        return -1;
-    }
+    try { return std::stoi(digits); }
+    catch (...) { return -1; }
 }
 
-static void write_phase8h_world_reconstruction_snapshot(int run, int delay_seconds)
+static int phase8h2_spacing(const std::set<int32_t>& values)
+{
+    if (values.size() < 2) return 0;
+
+    std::vector<int32_t> v(values.begin(), values.end());
+    std::map<int, int> freq;
+
+    for (size_t i = 1; i < v.size(); ++i)
+    {
+        int d = std::abs(v[i] - v[i - 1]);
+        if (d > 0 && d < 10000) freq[d]++;
+    }
+
+    int best = 0;
+    int best_count = 0;
+
+    for (const auto& kv : freq)
+    {
+        if (kv.second > best_count)
+        {
+            best = kv.first;
+            best_count = kv.second;
+        }
+    }
+
+    return best;
+}
+
+static void write_phase8h2_safe_world_bounds_snapshot(int run, int delay_seconds)
 {
     auto out = out_dir();
 
-    std::ofstream summary(out / "phase8h_summary.txt", std::ios::app);
-    std::ofstream compcsv(out / "phase8h_confirmed_components.csv", std::ios::app);
-    std::ofstream actorcsv(out / "phase8h_landscape_actor_candidates.csv", std::ios::app);
-    std::ofstream boundscsv(out / "phase8h_island_global_bounds.csv", std::ios::app);
-    std::ofstream ptrcsv(out / "phase8h_height_pointer_hints.csv", std::ios::app);
+    std::ofstream summary(out / "phase8h2_summary.txt", std::ios::app);
+    std::ofstream collcsv(out / "phase8h2_confirmed_collision_components.csv", std::ios::app);
+    std::ofstream boundscsv(out / "phase8h2_island_bounds.csv", std::ios::app);
+    std::ofstream actorcsv(out / "phase8h2_actor_candidates.csv", std::ios::app);
+    std::ofstream ptrcsv(out / "phase8h2_limited_pointer_hints.csv", std::ios::app);
 
     if (run == 1)
     {
-        compcsv <<
-        "run,delay_seconds,kind,landscape_id,component_id,"
-        "section_x,section_y,"
-        "obj_addr,path\n";
-
-        actorcsv <<
-        "run,delay_seconds,landscape_id,class,name,"
-        "actor_x,actor_y,actor_z,"
-        "rot_x,rot_y,rot_z,"
-        "scale_x,scale_y,scale_z,"
-        "path,obj_addr\n";
-
-        boundscsv <<
-        "run,delay_seconds,landscape_id,"
-        "count,min_x,max_x,min_y,max_y,"
-        "grid_x,grid_y,"
-        "spacing_x,spacing_y,"
-        "world_guess_x,world_guess_y\n";
-
-        ptrcsv <<
-        "run,delay_seconds,kind,landscape_id,component_id,"
-        "ptr_offset,ptr_value,"
-        "near0,near4,near8,near12,"
-        "path\n";
+        collcsv << "run,delay_seconds,landscape_id,component_id,section_x,section_y,path,obj_addr\n";
+        boundscsv << "run,delay_seconds,landscape_id,count,grid_x,grid_y,min_x,max_x,min_y,max_y,spacing_x,spacing_y,values_x,values_y\n";
+        actorcsv << "run,delay_seconds,class,name,landscape_id,path,obj_addr,f32_640,f32_644,f32_648,f32_656,f32_660,f32_664,f32_672,f32_676,f32_680,f32_684,f32_688\n";
+        ptrcsv << "run,delay_seconds,landscape_id,component_id,section_x,section_y,ptr_offset,ptr_value,near0,near4,near8,near12,path\n";
     }
 
-    struct Comp
+    struct Collision
     {
-        std::string kind;
         int landscape_id = -1;
         int component_id = -1;
         int32_t section_x = 0;
@@ -6185,31 +6192,23 @@ static void write_phase8h_world_reconstruction_snapshot(int run, int delay_secon
         UObject* obj = nullptr;
     };
 
-    struct Actor
+    struct Bounds
     {
-        int landscape_id = -1;
-        std::string cls;
-        std::string name;
-        std::string path;
-        UObject* obj = nullptr;
-
-        float x = 0;
-        float y = 0;
-        float z = 0;
-
-        float rx = 0;
-        float ry = 0;
-        float rz = 0;
-
-        float sx = 0;
-        float sy = 0;
-        float sz = 0;
+        int count = 0;
+        int32_t minx = INT32_MAX;
+        int32_t maxx = INT32_MIN;
+        int32_t miny = INT32_MAX;
+        int32_t maxy = INT32_MIN;
+        std::set<int32_t> xs;
+        std::set<int32_t> ys;
     };
 
-    std::vector<Comp> comps;
-    std::vector<Actor> actors;
+    std::vector<Collision> collisions;
+    std::map<int, Bounds> bounds;
 
     int scanned = 0;
+    int actor_like = 0;
+    int landscape_component_count = 0;
 
     RC::Unreal::UObjectGlobals::ForEachUObject(
         [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
@@ -6227,261 +6226,209 @@ static void write_phase8h_world_reconstruction_snapshot(int run, int delay_secon
                 path.find("PersistentLevel") != std::string::npos;
 
             if (!runtime) return RC::LoopAction::Continue;
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
 
-            if (path.find("Default__") != std::string::npos)
-                return RC::LoopAction::Continue;
+            bool is_collision = cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            bool is_component = cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos;
+            bool is_actorish = cls.find("Landscape") != std::string::npos && !is_collision && !is_component;
 
-            bool is_collision =
-                cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            if (is_component)
+            {
+                landscape_component_count++;
+            }
 
-            bool is_component =
-                cls == "LandscapeComponent" ||
-                cls.find("LandscapeComponent") != std::string::npos;
-
-            bool is_actor =
-                cls == "Landscape" ||
-                cls == "LandscapeProxy" ||
-                cls == "LandscapeStreamingProxy";
-
-            int landscape_id =
-                phase8h_extract_int_after(path, "Landscape_");
-
-            if (is_collision || is_component)
+            if (is_collision)
             {
                 uint8_t* base = reinterpret_cast<uint8_t*>(o);
 
-                Comp c{};
-
-                c.kind = is_collision ? "collision" : "component";
-                c.landscape_id = landscape_id;
-
-                c.component_id =
-                    is_collision
-                    ? phase8h_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_")
-                    : phase8h_extract_int_after(path, "LandscapeComponent_");
-
-                // confirmed Phase 8G offsets
-                c.section_x = phase8h_i32(base, 1296);
-                c.section_y = phase8h_i32(base, 1300);
-
+                Collision c{};
+                c.landscape_id = phase8h2_extract_int_after(path, "Landscape_");
+                c.component_id = phase8h2_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_");
+                c.section_x = phase8h2_i32(base, 1296);
+                c.section_y = phase8h2_i32(base, 1300);
                 c.path = path;
                 c.obj = o;
 
-                comps.push_back(c);
+                collisions.push_back(c);
 
-                compcsv
-                    << run << ","
-                    << delay_seconds << ","
-                    << c.kind << ","
-                    << c.landscape_id << ","
-                    << c.component_id << ","
-                    << c.section_x << ","
-                    << c.section_y << ","
-                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\","
-                    << "\"" << c.path << "\"\n";
+                auto& b = bounds[c.landscape_id];
+                b.count++;
+                b.minx = std::min(b.minx, c.section_x);
+                b.maxx = std::max(b.maxx, c.section_x);
+                b.miny = std::min(b.miny, c.section_y);
+                b.maxy = std::max(b.maxy, c.section_y);
+                b.xs.insert(c.section_x);
+                b.ys.insert(c.section_y);
 
-                // targeted pointer hints
-                const size_t ptr_offsets[] = {
-                    1684,1688,1732,1740,1748,1752,1760,
-                    1880,1888,1944,1952,
-                    2000,2020,2040,2060,2080,2120
-                };
-
-                for (size_t poff : ptr_offsets)
-                {
-                    uintptr_t ptr = phase8h_ptr(base, poff);
-
-                    if (!phase8h_probably_ptr(ptr))
-                        continue;
-
-                    ptrcsv
-                        << run << ","
+                collcsv << run << ","
                         << delay_seconds << ","
-                        << c.kind << ","
                         << c.landscape_id << ","
                         << c.component_id << ","
-                        << poff << ","
-                        << "\"0x" << std::hex << ptr << std::dec << "\","
-                        << phase8h_i32(base, poff + 0) << ","
-                        << phase8h_i32(base, poff + 4) << ","
-                        << phase8h_i32(base, poff + 8) << ","
-                        << phase8h_i32(base, poff + 12) << ","
-                        << "\"" << c.path << "\"\n";
-                }
+                        << c.section_x << ","
+                        << c.section_y << ","
+                        << "\"" << c.path << "\","
+                        << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\"\n";
             }
 
-            if (is_actor)
+            if (is_actorish)
             {
+                actor_like++;
                 uint8_t* base = reinterpret_cast<uint8_t*>(o);
+                int landscape_id = phase8h2_extract_int_after(path, "Landscape_");
 
-                Actor a{};
-
-                a.landscape_id = landscape_id;
-                a.cls = cls;
-                a.name = name;
-                a.path = path;
-                a.obj = o;
-
-                // broad transform probing
-                a.x = phase8h_f32(base, 656);
-                a.y = phase8h_f32(base, 660);
-                a.z = phase8h_f32(base, 664);
-
-                a.rx = phase8h_f32(base, 668);
-                a.ry = phase8h_f32(base, 672);
-                a.rz = phase8h_f32(base, 676);
-
-                a.sx = phase8h_f32(base, 680);
-                a.sy = phase8h_f32(base, 684);
-                a.sz = phase8h_f32(base, 688);
-
-                actors.push_back(a);
-
-                actorcsv
-                    << run << ","
-                    << delay_seconds << ","
-                    << a.landscape_id << ","
-                    << "\"" << a.cls << "\","
-                    << "\"" << a.name << "\","
-                    << a.x << ","
-                    << a.y << ","
-                    << a.z << ","
-                    << a.rx << ","
-                    << a.ry << ","
-                    << a.rz << ","
-                    << a.sx << ","
-                    << a.sy << ","
-                    << a.sz << ","
-                    << "\"" << a.path << "\","
-                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\"\n";
+                actorcsv << run << ","
+                         << delay_seconds << ","
+                         << "\"" << cls << "\","
+                         << "\"" << name << "\","
+                         << landscape_id << ","
+                         << "\"" << path << "\","
+                         << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(o) << std::dec << "\","
+                         << phase8h2_f32(base, 640) << ","
+                         << phase8h2_f32(base, 644) << ","
+                         << phase8h2_f32(base, 648) << ","
+                         << phase8h2_f32(base, 656) << ","
+                         << phase8h2_f32(base, 660) << ","
+                         << phase8h2_f32(base, 664) << ","
+                         << phase8h2_f32(base, 672) << ","
+                         << phase8h2_f32(base, 676) << ","
+                         << phase8h2_f32(base, 680) << ","
+                         << phase8h2_f32(base, 684) << ","
+                         << phase8h2_f32(base, 688) << "\n";
             }
 
             return RC::LoopAction::Continue;
         }
     );
 
-    summary << "\n===== PHASE 8H RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "\n===== PHASE 8H2 RUN " << run << " DELAY " << delay_seconds << "s =====\n";
     summary << "scanned_objects=" << scanned << "\n";
-    summary << "components=" << comps.size() << "\n";
-    summary << "actors=" << actors.size() << "\n";
+    summary << "collision_components=" << collisions.size() << "\n";
+    summary << "landscape_components_seen=" << landscape_component_count << "\n";
+    summary << "actor_like=" << actor_like << "\n";
+    summary << "islands=" << bounds.size() << "\n";
 
-    struct Bounds
+    if (collisions.empty() || bounds.empty())
     {
-        int count = 0;
-
-        int minx = INT32_MAX;
-        int maxx = INT32_MIN;
-
-        int miny = INT32_MAX;
-        int maxy = INT32_MIN;
-
-        std::set<int> xs;
-        std::set<int> ys;
-    };
-
-    std::map<int, Bounds> island_bounds;
-
-    for (const auto& c : comps)
-    {
-        auto& b = island_bounds[c.landscape_id];
-
-        b.count++;
-
-        b.minx = std::min(b.minx, c.section_x);
-        b.maxx = std::max(b.maxx, c.section_x);
-
-        b.miny = std::min(b.miny, c.section_y);
-        b.maxy = std::max(b.maxy, c.section_y);
-
-        b.xs.insert(c.section_x);
-        b.ys.insert(c.section_y);
+        summary << "DECISION=skip_not_loaded\n";
+        file_log("Phase 8H2 skip run=" + std::to_string(run));
+        return;
     }
 
-    for (const auto& kv : island_bounds)
+    summary << "DECISION=write_safe_bounds\n";
+
+    auto join_set = [](const std::set<int32_t>& vals, int maxn) -> std::string
+    {
+        std::string out;
+        int n = 0;
+        for (auto v : vals)
+        {
+            out += std::to_string(v);
+            n++;
+            if (n >= maxn) break;
+            out += "|";
+        }
+        return out;
+    };
+
+    for (const auto& kv : bounds)
     {
         int lid = kv.first;
-        const auto& b = kv.second;
-
-        int spacing_x = 0;
-        int spacing_y = 0;
-
-        if (b.xs.size() >= 2)
-        {
-            auto it = b.xs.begin();
-            int a = *it++;
-            int bb = *it;
-            spacing_x = bb - a;
-        }
-
-        if (b.ys.size() >= 2)
-        {
-            auto it = b.ys.begin();
-            int a = *it++;
-            int bb = *it;
-            spacing_y = bb - a;
-        }
+        const Bounds& b = kv.second;
 
         int grid_x = static_cast<int>(b.xs.size());
         int grid_y = static_cast<int>(b.ys.size());
+        int spacing_x = phase8h2_spacing(b.xs);
+        int spacing_y = phase8h2_spacing(b.ys);
 
-        // provisional world placement guess
-        int world_guess_x = b.minx * spacing_x;
-        int world_guess_y = b.miny * spacing_y;
+        boundscsv << run << ","
+                  << delay_seconds << ","
+                  << lid << ","
+                  << b.count << ","
+                  << grid_x << ","
+                  << grid_y << ","
+                  << b.minx << ","
+                  << b.maxx << ","
+                  << b.miny << ","
+                  << b.maxy << ","
+                  << spacing_x << ","
+                  << spacing_y << ","
+                  << "\"" << join_set(b.xs, 40) << "\","
+                  << "\"" << join_set(b.ys, 40) << "\"\n";
 
-        boundscsv
-            << run << ","
-            << delay_seconds << ","
-            << lid << ","
-            << b.count << ","
-            << b.minx << ","
-            << b.maxx << ","
-            << b.miny << ","
-            << b.maxy << ","
-            << grid_x << ","
-            << grid_y << ","
-            << spacing_x << ","
-            << spacing_y << ","
-            << world_guess_x << ","
-            << world_guess_y
-            << "\n";
-
-        summary
-            << "Landscape_" << lid
-            << " count=" << b.count
-            << " grid=" << grid_x << "x" << grid_y
-            << " x=[" << b.minx << "," << b.maxx << "]"
-            << " y=[" << b.miny << "," << b.maxy << "]"
-            << " spacing=" << spacing_x << "/" << spacing_y
-            << "\n";
+        summary << "Landscape_" << lid
+                << " count=" << b.count
+                << " grid=" << grid_x << "x" << grid_y
+                << " x=[" << b.minx << "," << b.maxx << "]"
+                << " y=[" << b.miny << "," << b.maxy << "]"
+                << " spacing=" << spacing_x << "/" << spacing_y
+                << "\n";
     }
 
-    summary << "DECISION=world_reconstruction_active\n";
+    std::sort(collisions.begin(), collisions.end(), [](const Collision& a, const Collision& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        if (a.section_x != b.section_x) return a.section_x < b.section_x;
+        if (a.section_y != b.section_y) return a.section_y < b.section_y;
+        return a.component_id < b.component_id;
+    });
 
-    file_log(
-        "Phase 8H done run=" +
-        std::to_string(run) +
-        " comps=" +
-        std::to_string(comps.size()) +
-        " actors=" +
-        std::to_string(actors.size())
-    );
+    const size_t ptr_offsets[] = {1880, 1888, 1944, 1952, 2000, 2020, 2040};
+    const int max_pointer_samples = 200;
+
+    int pointer_samples = 0;
+
+    for (const auto& c : collisions)
+    {
+        if (pointer_samples >= max_pointer_samples) break;
+
+        uint8_t* base = reinterpret_cast<uint8_t*>(c.obj);
+
+        for (size_t poff : ptr_offsets)
+        {
+            uintptr_t ptr = phase8h2_ptr(base, poff);
+
+            if (!phase8h2_probably_ptr(ptr))
+                continue;
+
+            ptrcsv << run << ","
+                   << delay_seconds << ","
+                   << c.landscape_id << ","
+                   << c.component_id << ","
+                   << c.section_x << ","
+                   << c.section_y << ","
+                   << poff << ","
+                   << "\"0x" << std::hex << ptr << std::dec << "\","
+                   << phase8h2_i32(base, poff + 0) << ","
+                   << phase8h2_i32(base, poff + 4) << ","
+                   << phase8h2_i32(base, poff + 8) << ","
+                   << phase8h2_i32(base, poff + 12) << ","
+                   << "\"" << c.path << "\"\n";
+
+            pointer_samples++;
+
+            if (pointer_samples >= max_pointer_samples) break;
+        }
+    }
+
+    summary << "limited_pointer_samples=" << pointer_samples << "\n";
+
+    file_log("Phase 8H2 done run=" + std::to_string(run) + " collisions=" + std::to_string(collisions.size()) + " islands=" + std::to_string(bounds.size()) + " actor_like=" + std::to_string(actor_like));
 }
 
-static void start_phase8h_world_reconstruction()
+static void start_phase8h2_safe_world_bounds()
 {
     static bool started = false;
     if (started) return;
     started = true;
 
-    file_log("Phase 8H world reconstruction started");
+    file_log("Phase 8H2 safe world bounds started");
 
     std::thread([]()
     {
-        const int delays[] = {180, 360, 600};
-
+        const int delays[] = {180, 360};
         int previous = 0;
 
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < 2; ++i)
         {
             int target = delays[i];
             int delta = target - previous;
@@ -6492,14 +6439,14 @@ static void start_phase8h_world_reconstruction()
                 std::this_thread::sleep_for(std::chrono::seconds(delta));
             }
 
-            write_phase8h_world_reconstruction_snapshot(i + 1, target);
+            write_phase8h2_safe_world_bounds_snapshot(i + 1, target);
         }
 
-        file_log("Phase 8H world reconstruction finished");
+        file_log("Phase 8H2 safe world bounds finished");
     }).detach();
 }
 
-// END PHASE8H_WORLD_RECONSTRUCTION
+// END PHASE8H2_SAFE_WORLD_BOUNDS
 
 
 
@@ -6589,20 +6536,21 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.18.0");
+        ModVersion = STR("1.18.1");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.18.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.18.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.18.1.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.18.1.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
         // disabled v1.18.0: start_phase8g_grid_and_section_confirmation();
-        start_phase8h_world_reconstruction();
+        // disabled v1.18.1: start_phase8h_world_reconstruction();
+        start_phase8h2_safe_world_bounds();
     }
 
     auto on_update() -> void override
