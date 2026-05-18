@@ -6450,6 +6450,450 @@ static void start_phase8h2_safe_world_bounds()
 
 
 
+
+
+// BEGIN PHASE8I_ACTOR_TRANSFORM_SCAN
+
+static int32_t phase8i_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static float phase8i_f32(uint8_t* base, size_t off)
+{
+    float v = 0.f;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uint64_t phase8i_u64(uint8_t* base, size_t off)
+{
+    uint64_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static int phase8i_extract_int_after(const std::string& text, const std::string& token)
+{
+    size_t pos = text.rfind(token);
+    if (pos == std::string::npos) return -1;
+    pos += token.size();
+
+    std::string digits;
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+    {
+        digits.push_back(text[pos]);
+        pos++;
+    }
+
+    if (digits.empty()) return -1;
+
+    try { return std::stoi(digits); }
+    catch (...) { return -1; }
+}
+
+static bool phase8i_plausible_world_float(float v)
+{
+    if (!std::isfinite(v)) return false;
+    float av = std::abs(v);
+    if (av < 0.000001f) return true;
+    if (av > 200000000.0f) return false;
+    return true;
+}
+
+static bool phase8i_plausible_nonzero_world_float(float v)
+{
+    if (!phase8i_plausible_world_float(v)) return false;
+    return std::abs(v) > 0.001f;
+}
+
+static bool phase8i_plausible_scale(float v)
+{
+    if (!std::isfinite(v)) return false;
+    return v > 0.0001f && v < 10000.0f;
+}
+
+static bool phase8i_plausible_rot(float v)
+{
+    if (!std::isfinite(v)) return false;
+    return std::abs(v) <= 360.01f;
+}
+
+static int phase8i_spacing(const std::set<int32_t>& values)
+{
+    if (values.size() < 2) return 0;
+
+    std::vector<int32_t> v(values.begin(), values.end());
+    std::map<int, int> freq;
+
+    for (size_t i = 1; i < v.size(); ++i)
+    {
+        int d = std::abs(v[i] - v[i - 1]);
+        if (d > 0 && d < 10000) freq[d]++;
+    }
+
+    int best = 0;
+    int best_count = 0;
+
+    for (const auto& kv : freq)
+    {
+        if (kv.second > best_count)
+        {
+            best = kv.first;
+            best_count = kv.second;
+        }
+    }
+
+    return best;
+}
+
+static void write_phase8i_actor_transform_scan_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase8i_summary.txt", std::ios::app);
+    std::ofstream bounds_csv(out / "phase8i_collision_island_bounds.csv", std::ios::app);
+    std::ofstream actor_float_csv(out / "phase8i_actor_float_windows.csv", std::ios::app);
+    std::ofstream actor_triplet_csv(out / "phase8i_actor_transform_triplet_candidates.csv", std::ios::app);
+    std::ofstream actor_int_csv(out / "phase8i_actor_int_windows.csv", std::ios::app);
+
+    if (run == 1)
+    {
+        bounds_csv << "run,delay_seconds,landscape_id,count,grid_x,grid_y,min_x,max_x,min_y,max_y,spacing_x,spacing_y,values_x,values_y\n";
+
+        actor_float_csv << "run,delay_seconds,landscape_id,class,name,path,obj_addr,offset,f32,i32,u64_hex,plausible_world,plausible_nonzero,plausible_scale,plausible_rot\n";
+
+        actor_triplet_csv << "run,delay_seconds,landscape_id,class,name,path,obj_addr,offset,x,y,z,score,reason\n";
+
+        actor_int_csv << "run,delay_seconds,landscape_id,class,name,path,obj_addr,offset,i32,u32_hex\n";
+    }
+
+    struct Bounds
+    {
+        int count = 0;
+        int32_t minx = INT32_MAX;
+        int32_t maxx = INT32_MIN;
+        int32_t miny = INT32_MAX;
+        int32_t maxy = INT32_MIN;
+        std::set<int32_t> xs;
+        std::set<int32_t> ys;
+    };
+
+    struct Actor
+    {
+        int landscape_id = -1;
+        std::string cls;
+        std::string name;
+        std::string path;
+        UObject* obj = nullptr;
+    };
+
+    std::map<int, Bounds> bounds;
+    std::vector<Actor> actors;
+
+    int scanned = 0;
+    int collisions = 0;
+    int components = 0;
+    int actor_like = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool runtime =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!runtime) return RC::LoopAction::Continue;
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
+
+            bool is_collision = cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            bool is_component = cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos;
+            bool is_actor = cls == "Landscape" || cls == "LandscapeProxy" || cls == "LandscapeStreamingProxy";
+            bool is_actorish = cls.find("Landscape") != std::string::npos && !is_collision && !is_component;
+
+            if (is_component) components++;
+
+            if (is_collision)
+            {
+                collisions++;
+
+                uint8_t* base = reinterpret_cast<uint8_t*>(o);
+                int lid = phase8i_extract_int_after(path, "Landscape_");
+                int32_t sx = phase8i_i32(base, 1296);
+                int32_t sy = phase8i_i32(base, 1300);
+
+                auto& b = bounds[lid];
+                b.count++;
+                b.minx = std::min(b.minx, sx);
+                b.maxx = std::max(b.maxx, sx);
+                b.miny = std::min(b.miny, sy);
+                b.maxy = std::max(b.maxy, sy);
+                b.xs.insert(sx);
+                b.ys.insert(sy);
+            }
+
+            if (is_actor || is_actorish)
+            {
+                actor_like++;
+
+                Actor a{};
+                a.landscape_id = phase8i_extract_int_after(path, "Landscape_");
+                a.cls = cls;
+                a.name = name;
+                a.path = path;
+                a.obj = o;
+                actors.push_back(a);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    auto join_set = [](const std::set<int32_t>& vals, int maxn) -> std::string
+    {
+        std::string out;
+        int n = 0;
+        for (auto v : vals)
+        {
+            out += std::to_string(v);
+            n++;
+            if (n >= maxn) break;
+            out += "|";
+        }
+        return out;
+    };
+
+    for (const auto& kv : bounds)
+    {
+        int lid = kv.first;
+        const Bounds& b = kv.second;
+
+        int grid_x = static_cast<int>(b.xs.size());
+        int grid_y = static_cast<int>(b.ys.size());
+        int spacing_x = phase8i_spacing(b.xs);
+        int spacing_y = phase8i_spacing(b.ys);
+
+        bounds_csv << run << ","
+                   << delay_seconds << ","
+                   << lid << ","
+                   << b.count << ","
+                   << grid_x << ","
+                   << grid_y << ","
+                   << b.minx << ","
+                   << b.maxx << ","
+                   << b.miny << ","
+                   << b.maxy << ","
+                   << spacing_x << ","
+                   << spacing_y << ","
+                   << "\"" << join_set(b.xs, 40) << "\","
+                   << "\"" << join_set(b.ys, 40) << "\"\n";
+    }
+
+    int exact_landscape_actors = 0;
+    int triplet_candidates = 0;
+    int float_rows = 0;
+    int int_rows = 0;
+
+    for (const auto& a : actors)
+    {
+        if (a.cls == "Landscape") exact_landscape_actors++;
+
+        uint8_t* base = reinterpret_cast<uint8_t*>(a.obj);
+
+        for (size_t off = 0x100; off <= 0x1200; off += 4)
+        {
+            float f = phase8i_f32(base, off);
+            int32_t i32 = phase8i_i32(base, off);
+            uint64_t u64 = 0;
+            if (off + 8 <= 0x1208)
+            {
+                u64 = phase8i_u64(base, off);
+            }
+
+            bool pw = phase8i_plausible_world_float(f);
+            bool pnz = phase8i_plausible_nonzero_world_float(f);
+            bool ps = phase8i_plausible_scale(f);
+            bool pr = phase8i_plausible_rot(f);
+
+            bool interesting_float =
+                pnz ||
+                ps ||
+                pr ||
+                (i32 == 127 || i32 == 159 || i32 == 191 || i32 == 223 || i32 == 255 ||
+                 i32 == 508 || i32 == 510 || i32 == 762 || i32 == 954 || i32 == 1020);
+
+            if (interesting_float && float_rows < 120000)
+            {
+                actor_float_csv << run << ","
+                                << delay_seconds << ","
+                                << a.landscape_id << ","
+                                << "\"" << a.cls << "\","
+                                << "\"" << a.name << "\","
+                                << "\"" << a.path << "\","
+                                << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(a.obj) << std::dec << "\","
+                                << off << ","
+                                << f << ","
+                                << i32 << ","
+                                << "\"0x" << std::hex << u64 << std::dec << "\","
+                                << (pw ? "1" : "0") << ","
+                                << (pnz ? "1" : "0") << ","
+                                << (ps ? "1" : "0") << ","
+                                << (pr ? "1" : "0") << "\n";
+                float_rows++;
+            }
+
+            if ((i32 >= -2000000000 && i32 <= 2000000000) &&
+                (i32 == a.landscape_id ||
+                 i32 == 127 || i32 == 159 || i32 == 191 || i32 == 223 || i32 == 255 ||
+                 i32 == 508 || i32 == 510 || i32 == 762 || i32 == 954 || i32 == 1020 ||
+                 (i32 > 2147000000 && i32 < 2147483000)) &&
+                int_rows < 50000)
+            {
+                actor_int_csv << run << ","
+                              << delay_seconds << ","
+                              << a.landscape_id << ","
+                              << "\"" << a.cls << "\","
+                              << "\"" << a.name << "\","
+                              << "\"" << a.path << "\","
+                              << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(a.obj) << std::dec << "\","
+                              << off << ","
+                              << i32 << ","
+                              << "\"0x" << std::hex << static_cast<uint32_t>(i32) << std::dec << "\"\n";
+                int_rows++;
+            }
+        }
+
+        for (size_t off = 0x100; off <= 0x11f4; off += 4)
+        {
+            float x = phase8i_f32(base, off);
+            float y = phase8i_f32(base, off + 4);
+            float z = phase8i_f32(base, off + 8);
+
+            int score = 0;
+            std::string reason;
+
+            if (phase8i_plausible_world_float(x) && phase8i_plausible_world_float(y) && phase8i_plausible_world_float(z))
+            {
+                score += 10;
+                reason += "finite;";
+            }
+
+            if (phase8i_plausible_nonzero_world_float(x) || phase8i_plausible_nonzero_world_float(y) || phase8i_plausible_nonzero_world_float(z))
+            {
+                score += 10;
+                reason += "nonzero;";
+            }
+
+            if (std::abs(x) < 10000000.f && std::abs(y) < 10000000.f && std::abs(z) < 10000000.f)
+            {
+                score += 10;
+                reason += "world_range;";
+            }
+
+            if (phase8i_plausible_rot(x) && phase8i_plausible_rot(y) && phase8i_plausible_rot(z))
+            {
+                score += 5;
+                reason += "rot_like;";
+            }
+
+            if (phase8i_plausible_scale(x) && phase8i_plausible_scale(y) && phase8i_plausible_scale(z))
+            {
+                score += 5;
+                reason += "scale_like;";
+            }
+
+            if (score >= 25 && triplet_candidates < 50000)
+            {
+                actor_triplet_csv << run << ","
+                                  << delay_seconds << ","
+                                  << a.landscape_id << ","
+                                  << "\"" << a.cls << "\","
+                                  << "\"" << a.name << "\","
+                                  << "\"" << a.path << "\","
+                                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(a.obj) << std::dec << "\","
+                                  << off << ","
+                                  << x << ","
+                                  << y << ","
+                                  << z << ","
+                                  << score << ","
+                                  << "\"" << reason << "\"\n";
+                triplet_candidates++;
+            }
+        }
+    }
+
+    summary << "\n===== PHASE 8I RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "collision_components=" << collisions << "\n";
+    summary << "landscape_components_seen=" << components << "\n";
+    summary << "islands_from_collision_bounds=" << bounds.size() << "\n";
+    summary << "actor_like=" << actor_like << "\n";
+    summary << "exact_landscape_actors=" << exact_landscape_actors << "\n";
+    summary << "float_rows=" << float_rows << "\n";
+    summary << "int_rows=" << int_rows << "\n";
+    summary << "triplet_candidates=" << triplet_candidates << "\n";
+
+    if (bounds.empty() || collisions == 0)
+    {
+        summary << "DECISION=skip_not_loaded\n";
+        file_log("Phase 8I skip run=" + std::to_string(run));
+        return;
+    }
+
+    summary << "DECISION=actor_transform_scan_written\n";
+
+    file_log("Phase 8I done run=" + std::to_string(run) +
+             " collisions=" + std::to_string(collisions) +
+             " islands=" + std::to_string(bounds.size()) +
+             " actors=" + std::to_string(actor_like) +
+             " triplets=" + std::to_string(triplet_candidates));
+}
+
+static void start_phase8i_actor_transform_scan()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 8I actor transform scan started");
+
+    std::thread([]()
+    {
+        const int delays[] = {240, 420};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase8i_actor_transform_scan_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 8I actor transform scan finished");
+    }).detach();
+}
+
+// END PHASE8I_ACTOR_TRANSFORM_SCAN
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -6536,21 +6980,22 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.18.1");
+        ModVersion = STR("1.19.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.18.1.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.18.1.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.19.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.19.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
         // disabled v1.18.0: start_phase8g_grid_and_section_confirmation();
         // disabled v1.18.1: start_phase8h_world_reconstruction();
-        start_phase8h2_safe_world_bounds();
+        // disabled v1.19.0: start_phase8h2_safe_world_bounds();
+        start_phase8i_actor_transform_scan();
     }
 
     auto on_update() -> void override
