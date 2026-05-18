@@ -8945,6 +8945,343 @@ static void start_phase8m_component_location_validation()
 
 
 
+
+
+// BEGIN PHASE9A_RT_ARRAY_PROBE
+
+static int32_t phase9a_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uint32_t phase9a_u32(uint8_t* base, size_t off)
+{
+    uint32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static float phase9a_f32(uint8_t* base, size_t off)
+{
+    float v = 0.f;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase9a_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase9a_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xffffffffffffffffULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static bool phase9a_interesting_i32(int32_t v)
+{
+    if (v == 0) return true;
+    if (v == 1 || v == 2 || v == 4 || v == 8 || v == 16 || v == 32 || v == 52) return true;
+    if (v == 64 || v == 128 || v == 256 || v == 512 || v == 1024 || v == 2048 || v == 4096 || v == 8192) return true;
+    if (v > 0 && v <= 10000) return true;
+    return false;
+}
+
+static bool phase9a_interesting_float(float v)
+{
+    if (!std::isfinite(v)) return false;
+    if (std::abs(v) < 0.000001f) return true;
+    if (std::abs(v) <= 10000.0f) return true;
+    return false;
+}
+
+static std::string phase9a_target_label(const std::string& path)
+{
+    if (path.find("RT_LandscapeHeights") != std::string::npos) return "RT_LandscapeHeights";
+    if (path.find("RT_LandscapeTable") != std::string::npos) return "RT_LandscapeTable";
+    if (path.find("RT_Biomes") != std::string::npos) return "RT_Biomes";
+    if (path.find("RT_SubBiomes") != std::string::npos) return "RT_SubBiomes";
+    if (path.find("RT_BiomeDistanceFields") != std::string::npos) return "RT_BiomeDistanceFields";
+    return "";
+}
+
+static bool phase9a_is_target_path(const std::string& path)
+{
+    return !phase9a_target_label(path).empty();
+}
+
+static bool phase9a_is_rendering_function_name(const std::string& name)
+{
+    return name.find("ReadRenderTarget") != std::string::npos ||
+           name.find("ExportRenderTarget") != std::string::npos ||
+           name.find("SampleTextureRenderTarget") != std::string::npos ||
+           name.find("DrawMaterialToRenderTarget") != std::string::npos ||
+           name.find("CreateRenderTarget") != std::string::npos ||
+           name.find("TextureRenderTarget2DArray") != std::string::npos;
+}
+
+static void write_phase9a_rt_array_probe_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9a_summary.txt", std::ios::app);
+    std::ofstream targets_csv(out / "phase9a_rt_array_targets.csv", std::ios::app);
+    std::ofstream fields_csv(out / "phase9a_rt_array_field_probe.csv", std::ios::app);
+    std::ofstream ptrs_csv(out / "phase9a_rt_array_pointer_probe.csv", std::ios::app);
+    std::ofstream funcs_txt(out / "phase9a_rendering_functions.txt", std::ios::app);
+    std::ofstream notes(out / "phase9a_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        targets_csv << "run,delay_seconds,label,name,path,class,addr,is_exact_target,is_texture_array,is_package\n";
+        fields_csv << "run,delay_seconds,label,path,addr,offset,i32,u32_hex,float_value,interpretation\n";
+        ptrs_csv << "run,delay_seconds,label,path,addr,offset,ptr_value,pointee_class,pointee_name,pointee_path,relevance\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::map<uintptr_t, ObjInfo> object_by_addr;
+    std::vector<ObjInfo> target_objects;
+    std::vector<ObjInfo> rendering_functions;
+
+    int scanned = 0;
+    int exact_targets = 0;
+    int target_packages = 0;
+    int texture_arrays = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            ObjInfo oi{};
+            oi.obj = o;
+            oi.cls = cls;
+            oi.name = name;
+            oi.path = path;
+            object_by_addr[reinterpret_cast<uintptr_t>(o)] = oi;
+
+            if (phase9a_is_target_path(path))
+            {
+                target_objects.push_back(oi);
+            }
+
+            if (cls.find("Function") != std::string::npos && phase9a_is_rendering_function_name(name))
+            {
+                rendering_functions.push_back(oi);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(target_objects.begin(), target_objects.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        if (phase9a_target_label(a.path) != phase9a_target_label(b.path))
+            return phase9a_target_label(a.path) < phase9a_target_label(b.path);
+        return a.path < b.path;
+    });
+
+    std::sort(rendering_functions.begin(), rendering_functions.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        return a.path < b.path;
+    });
+
+    int field_rows = 0;
+    int ptr_rows = 0;
+
+    for (const auto& t : target_objects)
+    {
+        std::string label = phase9a_target_label(t.path);
+        bool is_texture_array = t.cls.find("TextureRenderTarget2DArray") != std::string::npos;
+        bool is_package = t.cls == "Package";
+        bool is_exact = is_texture_array && t.name == label;
+
+        if (is_texture_array) texture_arrays++;
+        if (is_package) target_packages++;
+        if (is_exact) exact_targets++;
+
+        targets_csv << run << ","
+                    << delay_seconds << ","
+                    << "\"" << label << "\","
+                    << "\"" << t.name << "\","
+                    << "\"" << t.path << "\","
+                    << "\"" << t.cls << "\","
+                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(t.obj) << std::dec << "\","
+                    << (is_exact ? "1" : "0") << ","
+                    << (is_texture_array ? "1" : "0") << ","
+                    << (is_package ? "1" : "0") << "\n";
+
+        if (!is_texture_array)
+            continue;
+
+        uint8_t* base = reinterpret_cast<uint8_t*>(t.obj);
+
+        for (size_t off = 0x0; off <= 0x800; off += 4)
+        {
+            int32_t i32 = phase9a_i32(base, off);
+            uint32_t u32 = phase9a_u32(base, off);
+            float f = phase9a_f32(base, off);
+
+            bool interesting = phase9a_interesting_i32(i32) || phase9a_interesting_float(f);
+
+            if (!interesting)
+                continue;
+
+            std::string interp = "candidate";
+            if (i32 == 52) interp = "possible_slice_count_52";
+            if (i32 == 1 || i32 == 2 || i32 == 4 || i32 == 8 || i32 == 16) interp = "small_count_or_enum";
+            if (i32 == 64 || i32 == 128 || i32 == 256 || i32 == 512 || i32 == 1024 || i32 == 2048 || i32 == 4096 || i32 == 8192) interp = "possible_dimension";
+            if (i32 > 0 && i32 <= 10000 && interp == "candidate") interp = "small_positive_int";
+
+            fields_csv << run << ","
+                       << delay_seconds << ","
+                       << "\"" << label << "\","
+                       << "\"" << t.path << "\","
+                       << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(t.obj) << std::dec << "\","
+                       << off << ","
+                       << i32 << ","
+                       << "\"0x" << std::hex << u32 << std::dec << "\","
+                       << f << ","
+                       << "\"" << interp << "\"\n";
+
+            field_rows++;
+        }
+
+        for (size_t off = 0x0; off <= 0x900; off += 8)
+        {
+            uintptr_t ptr = phase9a_ptr(base, off);
+            if (!phase9a_probably_ptr(ptr)) continue;
+
+            auto it = object_by_addr.find(ptr);
+            if (it == object_by_addr.end()) continue;
+
+            const ObjInfo& poi = it->second;
+
+            std::string relevance = "object_ref";
+            if (poi.cls.find("Texture") != std::string::npos) relevance = "texture_ref";
+            if (poi.cls.find("RenderTarget") != std::string::npos) relevance = "render_target_ref";
+            if (poi.path.find("/R5TerrainGeneratorAPI/Volumization") != std::string::npos) relevance = "terrain_generator_ref";
+            if (phase9a_is_target_path(poi.path)) relevance = "target_ref";
+
+            ptrs_csv << run << ","
+                     << delay_seconds << ","
+                     << "\"" << label << "\","
+                     << "\"" << t.path << "\","
+                     << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(t.obj) << std::dec << "\","
+                     << off << ","
+                     << "\"0x" << std::hex << ptr << std::dec << "\","
+                     << "\"" << poi.cls << "\","
+                     << "\"" << poi.name << "\","
+                     << "\"" << poi.path << "\","
+                     << "\"" << relevance << "\"\n";
+
+            ptr_rows++;
+        }
+    }
+
+    funcs_txt << "\n===== PHASE 9A RENDERING FUNCTIONS RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    funcs_txt << "mode=discovery_only_no_ProcessEvent_no_GPU_no_ReadPixels\n";
+
+    int fn = 0;
+    for (const auto& f : rendering_functions)
+    {
+        funcs_txt << "FUNCTION[" << (++fn) << "]\n";
+        funcs_txt << "  name=" << f.name << "\n";
+        funcs_txt << "  path=" << f.path << "\n";
+        funcs_txt << "  class=" << f.cls << "\n";
+        funcs_txt << "  addr=0x" << std::hex << reinterpret_cast<uintptr_t>(f.obj) << std::dec << "\n";
+    }
+
+    notes << "\n===== PHASE 9A NOTES RUN " << run << " =====\n";
+    notes << "This build intentionally does not call ReadRenderTarget, ExportRenderTarget, GPU APIs, or ReadPixels.\n";
+    notes << "Goal is to locate all target TextureRenderTarget2DArray objects and infer safe metadata offsets before attempting readback.\n";
+    notes << "Targets: RT_LandscapeHeights, RT_LandscapeTable, RT_Biomes, RT_SubBiomes, RT_BiomeDistanceFields.\n";
+    notes << "Next phase should use confirmed dimensions/slices/format offsets from phase9a_rt_array_field_probe.csv.\n";
+
+    summary << "\n===== PHASE 9A RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "target_objects=" << target_objects.size() << "\n";
+    summary << "exact_texture_array_targets=" << exact_targets << "\n";
+    summary << "target_packages=" << target_packages << "\n";
+    summary << "texture_arrays=" << texture_arrays << "\n";
+    summary << "rendering_functions=" << rendering_functions.size() << "\n";
+    summary << "field_rows=" << field_rows << "\n";
+    summary << "pointer_rows=" << ptr_rows << "\n";
+    summary << "mode=discovery_only_no_ProcessEvent_no_GPU_no_ReadPixels\n";
+
+    if (exact_targets >= 5)
+    {
+        summary << "DECISION=all_target_rt_arrays_found\n";
+    }
+    else
+    {
+        summary << "DECISION=missing_some_target_rt_arrays\n";
+    }
+
+    file_log("Phase 9A done run=" + std::to_string(run) +
+             " exact_targets=" + std::to_string(exact_targets) +
+             " fields=" + std::to_string(field_rows) +
+             " ptrs=" + std::to_string(ptr_rows));
+}
+
+static void start_phase9a_rt_array_probe()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9A RT array probe started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase9a_rt_array_probe_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9A RT array probe finished");
+    }).detach();
+}
+
+// END PHASE9A_RT_ARRAY_PROBE
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -9031,15 +9368,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.23.0");
+        ModVersion = STR("1.24.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.23.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.23.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.24.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.24.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -9050,7 +9387,8 @@ public:
         // disabled v1.21.0: start_phase8j_root_location_scan();
         // disabled v1.22.0: start_phase8k_rootcomponent_precision();
         // disabled v1.23.0: start_phase8l_worldmap_export();
-        start_phase8m_component_location_validation();
+        // disabled v1.24.0: start_phase8m_component_location_validation();
+        start_phase9a_rt_array_probe();
     }
 
     auto on_update() -> void override
