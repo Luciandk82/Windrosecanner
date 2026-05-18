@@ -4323,17 +4323,10 @@ static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger,
     std::string trigger_path = obj_path(trigger);
     if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
 
-    bool scheduled =
-        scan_attempt == 8 ||
-        scan_attempt == 12 ||
-        scan_attempt == 18 ||
-        scan_attempt == 24 ||
-        scan_attempt == 30;
-
-    if (!scheduled) return;
+    // Phase 8C3: load-aware trigger.
+    // Do not run just because a timer attempt was reached.
+    // First scan for real runtime landscape components. Only snapshot when they exist.
     if (phase8c_runs >= 5) return;
-
-    phase8c_runs++;
 
     auto out = out_dir();
 
@@ -4341,10 +4334,10 @@ static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger,
     std::ofstream csv(out / "phase8c_component_layout_candidates.csv", std::ios::app);
     std::ofstream rawlog(out / "phase8c_tiny_raw_probe_windows.txt", std::ios::app);
 
-    file_log("Phase 8C2 ENTERED attempt=" + std::to_string(scan_attempt) + " run=" + std::to_string(phase8c_runs));
+    file_log("Phase 8C3 CHECK attempt=" + std::to_string(scan_attempt) + " current_runs=" + std::to_string(phase8c_runs));
 
     log << "\n===== PHASE 8C2 RUN " << phase8c_runs << " ATTEMPT " << scan_attempt << " =====\n";
-    log << "Phase 8C2 component layout + tiny raw probes\n";
+    log << "Phase 8C3 component layout + tiny raw probes\n";
     log << "mode=targeted_runtime_landscape_metadata_and_small_memory_windows\n";
     log << "goal=find_sectionbase_component_size_candidate_offsets_and_initial_height_raw_signal\n";
     log << "safety=max_8_objects_small_windows_no_full_height_dump\n\n";
@@ -4440,7 +4433,43 @@ static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger,
     log << "SUMMARY\n";
     log << "  scanned_objects=" << scanned << "\n";
     log << "  collisions=" << collisions.size() << "\n";
-    log << "  landscape_components=" << components.size() << "\n\n";
+    log << "  landscape_components=" << components.size() << "\n";
+    log << "  scan_attempt=" << scan_attempt << "\n";
+    log << "  current_runs_before_decision=" << phase8c_runs << "\n\n";
+
+    bool landscape_loaded = (!collisions.empty() && !components.empty());
+
+    bool force_late_snapshot =
+        scan_attempt >= 35 &&
+        (collisions.size() > 0 || components.size() > 0);
+
+    if (!landscape_loaded && !force_late_snapshot)
+    {
+        log << "DECISION=skip_not_loaded_yet\n";
+        log << "reason=no_runtime_landscape_components_found_yet\n\n";
+        file_log("Phase 8C3 skip attempt=" + std::to_string(scan_attempt) + " scanned=" + std::to_string(scanned) + " collisions=" + std::to_string(collisions.size()) + " components=" + std::to_string(components.size()));
+        return;
+    }
+
+    bool should_snapshot =
+        phase8c_runs == 0 ||
+        scan_attempt >= 20 ||
+        scan_attempt >= 35 ||
+        scan_attempt >= 50 ||
+        scan_attempt >= 70;
+
+    if (!should_snapshot)
+    {
+        log << "DECISION=skip_waiting_for_snapshot_window\n\n";
+        return;
+    }
+
+    phase8c_runs++;
+
+    log << "DECISION=run_snapshot\n";
+    log << "phase8c_run=" << phase8c_runs << "\n\n";
+
+    file_log("Phase 8C3 ENTERED attempt=" + std::to_string(scan_attempt) + " run=" + std::to_string(phase8c_runs) + " collisions=" + std::to_string(collisions.size()) + " components=" + std::to_string(components.size()));
 
     std::vector<Rec> probe_objects;
 
@@ -4610,7 +4639,7 @@ static void scan_render_targets()
 {
     static int attempts = 0;
 
-    if (attempts >= 36)
+    if (attempts >= 90)
     {
         return;
     }
@@ -4690,15 +4719,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.13.1");
+        ModVersion = STR("1.13.2");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.13.1.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.13.1.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.13.2.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.13.2.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
