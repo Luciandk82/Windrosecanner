@@ -5606,6 +5606,474 @@ static void start_phase8f_offset_value_matrix()
 }
 // END PHASE8F_OFFSET_VALUE_MATRIX
 
+
+
+// BEGIN PHASE8G_GRID_AND_SECTION_CONFIRMATION
+static int phase8g_extract_int_after(const std::string& text, const std::string& token)
+{
+    size_t pos = text.rfind(token);
+    if (pos == std::string::npos) return -1;
+    pos += token.size();
+
+    std::string digits;
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+    {
+        digits.push_back(text[pos]);
+        pos++;
+    }
+
+    if (digits.empty()) return -1;
+
+    try { return std::stoi(digits); }
+    catch (...) { return -1; }
+}
+
+static int32_t phase8g_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase8g_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase8g_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static std::string phase8g_join_set(const std::set<int32_t>& values, int maxn = 20)
+{
+    std::string out;
+    int shown = 0;
+    for (auto v : values)
+    {
+        out += std::to_string(v);
+        shown++;
+        if (shown >= maxn) break;
+        out += "|";
+    }
+    return out;
+}
+
+static int phase8g_guess_spacing(const std::set<int32_t>& values)
+{
+    if (values.size() < 2) return 0;
+
+    std::vector<int32_t> v(values.begin(), values.end());
+    std::map<int, int> diffs;
+
+    for (size_t i = 1; i < v.size(); ++i)
+    {
+        int d = std::abs(v[i] - v[i - 1]);
+        if (d > 0 && d < 10000) diffs[d]++;
+    }
+
+    int best_d = 0;
+    int best_c = 0;
+
+    for (const auto& kv : diffs)
+    {
+        if (kv.second > best_c)
+        {
+            best_d = kv.first;
+            best_c = kv.second;
+        }
+    }
+
+    return best_d;
+}
+
+static void write_phase8g_grid_and_section_confirmation_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream log(out / "phase8g_grid_and_section_summary.txt", std::ios::app);
+    std::ofstream csv(out / "phase8g_component_candidate_pairs.csv", std::ios::app);
+    std::ofstream grid(out / "phase8g_island_grid_candidates.csv", std::ios::app);
+    std::ofstream ptrcsv(out / "phase8g_pointer_candidates.csv", std::ios::app);
+
+    struct PairDef
+    {
+        const char* label;
+        size_t xoff;
+        size_t yoff;
+    };
+
+    const PairDef pairs[] = {
+        {"p1284_1288", 1284, 1288},
+        {"p1288_1292", 1288, 1292},
+        {"p1292_1296", 1292, 1296},
+        {"p1296_1300", 1296, 1300},
+        {"p1300_1304", 1300, 1304},
+        {"p1328_1332", 1328, 1332},
+        {"p1344_1348", 1344, 1348},
+        {"p1360_1364", 1360, 1364},
+        {"p1880_1888", 1880, 1888},
+        {"p2020_2040", 2020, 2040},
+        {"p2060_2120", 2060, 2120}
+    };
+
+    const size_t pair_count = sizeof(pairs) / sizeof(pairs[0]);
+
+    const size_t ptr_offsets[] = {
+        0, 8, 16, 24, 44, 52, 60,
+        140, 144, 156, 160, 180, 196, 200,
+        260, 512, 580, 764,
+        1176, 1180, 1284, 1288, 1292, 1296, 1300, 1304,
+        1684, 1688, 1732, 1740, 1748, 1752, 1760,
+        1880, 1888, 1944, 1952, 2000, 2020, 2040, 2060, 2080, 2120
+    };
+
+    const size_t ptr_count = sizeof(ptr_offsets) / sizeof(ptr_offsets[0]);
+
+    struct Rec
+    {
+        std::string kind;
+        std::string cls;
+        std::string name;
+        std::string path;
+        uintptr_t addr;
+        int landscape_id;
+        int component_id;
+        UObject* obj;
+    };
+
+    std::vector<Rec> rows;
+    int scanned = 0;
+    int collisions = 0;
+    int components = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool runtime =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!runtime) return RC::LoopAction::Continue;
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
+
+            bool is_collision = cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            bool is_component = cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos;
+
+            if (!is_collision && !is_component) return RC::LoopAction::Continue;
+
+            Rec r{};
+            r.kind = is_collision ? "collision" : "landscape_component";
+            r.cls = cls;
+            r.name = name;
+            r.path = path;
+            r.addr = reinterpret_cast<uintptr_t>(o);
+            r.landscape_id = phase8g_extract_int_after(path, "Landscape_");
+            r.component_id = is_collision
+                ? phase8g_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_")
+                : phase8g_extract_int_after(path, "LandscapeComponent_");
+            r.obj = o;
+
+            rows.push_back(r);
+
+            if (is_collision) collisions++;
+            if (is_component) components++;
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(rows.begin(), rows.end(), [](const Rec& a, const Rec& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        if (a.kind != b.kind) return a.kind < b.kind;
+        if (a.component_id != b.component_id) return a.component_id < b.component_id;
+        return a.path < b.path;
+    });
+
+    log << "\n===== PHASE 8G RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    log << "scanned_objects=" << scanned << "\n";
+    log << "rows=" << rows.size() << "\n";
+    log << "collisions=" << collisions << "\n";
+    log << "landscape_components=" << components << "\n";
+
+    if (rows.empty() || collisions == 0 || components == 0)
+    {
+        log << "DECISION=skip_not_loaded\n";
+        file_log("Phase 8G skip run=" + std::to_string(run));
+        return;
+    }
+
+    log << "DECISION=write_grid_confirmation\n";
+
+    if (run == 1)
+    {
+        csv << "run,delay_seconds,kind,landscape_id,component_id,name,path,addr,"
+               "pair_label,xoff,yoff,x,y,x_abs_ok,y_abs_ok,both_nonzero,both_small,xy_distinct_hint\n";
+
+        grid << "run,delay_seconds,kind,pair_label,landscape_id,count,"
+                "unique_x,unique_y,min_x,max_x,min_y,max_y,spacing_x,spacing_y,"
+                "grid_guess,score,values_x,values_y\n";
+
+        ptrcsv << "run,delay_seconds,kind,landscape_id,component_id,name,path,addr,"
+                  "ptr_offset,ptr_value,ptrlike,nearby_i32_0,nearby_i32_4,nearby_i32_8,nearby_i32_12\n";
+    }
+
+    struct GridAgg
+    {
+        int count = 0;
+        std::set<int32_t> xs;
+        std::set<int32_t> ys;
+        int32_t minx = INT32_MAX;
+        int32_t maxx = INT32_MIN;
+        int32_t miny = INT32_MAX;
+        int32_t maxy = INT32_MIN;
+    };
+
+    std::map<std::string, GridAgg> aggs;
+
+    auto agg_key = [](const std::string& kind, const std::string& pair_label, int landscape_id) -> std::string
+    {
+        return kind + "|" + pair_label + "|" + std::to_string(landscape_id);
+    };
+
+    for (const auto& r : rows)
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(r.obj);
+
+        for (size_t i = 0; i < pair_count; ++i)
+        {
+            int32_t x = phase8g_i32(base, pairs[i].xoff);
+            int32_t y = phase8g_i32(base, pairs[i].yoff);
+
+            bool x_abs_ok = std::abs(x) <= 1000000;
+            bool y_abs_ok = std::abs(y) <= 1000000;
+            bool both_nonzero = (x != 0 && y != 0);
+            bool both_small = std::abs(x) <= 10000 && std::abs(y) <= 10000;
+
+            int xy_distinct_hint = 0;
+            if (x != y) xy_distinct_hint++;
+            if (x != 0) xy_distinct_hint++;
+            if (y != 0) xy_distinct_hint++;
+
+            csv << run << ","
+                << delay_seconds << ","
+                << "\"" << r.kind << "\","
+                << r.landscape_id << ","
+                << r.component_id << ","
+                << "\"" << r.name << "\","
+                << "\"" << r.path << "\","
+                << "\"0x" << std::hex << r.addr << std::dec << "\","
+                << "\"" << pairs[i].label << "\","
+                << pairs[i].xoff << ","
+                << pairs[i].yoff << ","
+                << x << ","
+                << y << ","
+                << (x_abs_ok ? "1" : "0") << ","
+                << (y_abs_ok ? "1" : "0") << ","
+                << (both_nonzero ? "1" : "0") << ","
+                << (both_small ? "1" : "0") << ","
+                << xy_distinct_hint
+                << "\n";
+
+            if (x_abs_ok && y_abs_ok)
+            {
+                auto& a = aggs[agg_key(r.kind, pairs[i].label, r.landscape_id)];
+                a.count++;
+                a.xs.insert(x);
+                a.ys.insert(y);
+                a.minx = std::min(a.minx, x);
+                a.maxx = std::max(a.maxx, x);
+                a.miny = std::min(a.miny, y);
+                a.maxy = std::max(a.maxy, y);
+            }
+        }
+
+        for (size_t i = 0; i < ptr_count; ++i)
+        {
+            size_t off = ptr_offsets[i];
+            uintptr_t ptr = phase8g_ptr(base, off);
+            bool ptrlike = phase8g_probably_ptr(ptr);
+
+            if (!ptrlike) continue;
+
+            int32_t n0 = phase8g_i32(base, off);
+            int32_t n4 = phase8g_i32(base, off + 4);
+            int32_t n8 = phase8g_i32(base, off + 8);
+            int32_t n12 = phase8g_i32(base, off + 12);
+
+            ptrcsv << run << ","
+                   << delay_seconds << ","
+                   << "\"" << r.kind << "\","
+                   << r.landscape_id << ","
+                   << r.component_id << ","
+                   << "\"" << r.name << "\","
+                   << "\"" << r.path << "\","
+                   << "\"0x" << std::hex << r.addr << std::dec << "\","
+                   << off << ","
+                   << "\"0x" << std::hex << ptr << std::dec << "\","
+                   << "1,"
+                   << n0 << ","
+                   << n4 << ","
+                   << n8 << ","
+                   << n12
+                   << "\n";
+        }
+    }
+
+    std::vector<std::tuple<int, std::string, std::string, int, GridAgg>> scored;
+
+    for (const auto& kv : aggs)
+    {
+        const std::string& key = kv.first;
+        const GridAgg& a = kv.second;
+
+        size_t p1 = key.find("|");
+        size_t p2 = key.find("|", p1 + 1);
+        std::string kind = key.substr(0, p1);
+        std::string pair_label = key.substr(p1 + 1, p2 - p1 - 1);
+        int landscape_id = std::stoi(key.substr(p2 + 1));
+
+        int ux = static_cast<int>(a.xs.size());
+        int uy = static_cast<int>(a.ys.size());
+        int spacing_x = phase8g_guess_spacing(a.xs);
+        int spacing_y = phase8g_guess_spacing(a.ys);
+
+        int score = 0;
+
+        if (a.count >= 4) score += 10;
+        if (ux >= 2 && uy >= 2) score += 20;
+        if (ux * uy >= a.count) score += 15;
+        if (spacing_x > 0 && spacing_y > 0) score += 20;
+        if (spacing_x == spacing_y && spacing_x > 0) score += 20;
+        if (spacing_x == 127 || spacing_x == 159 || spacing_x == 255) score += 15;
+        if (spacing_y == 127 || spacing_y == 159 || spacing_y == 255) score += 15;
+        if (ux == 2 || ux == 3 || ux == 5 || ux == 7 || ux == 8) score += 10;
+        if (uy == 2 || uy == 3 || uy == 5 || uy == 7 || uy == 8) score += 10;
+
+        scored.push_back({score, kind, pair_label, landscape_id, a});
+    }
+
+    std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b)
+    {
+        if (std::get<0>(a) != std::get<0>(b)) return std::get<0>(a) > std::get<0>(b);
+        if (std::get<1>(a) != std::get<1>(b)) return std::get<1>(a) < std::get<1>(b);
+        if (std::get<2>(a) != std::get<2>(b)) return std::get<2>(a) < std::get<2>(b);
+        return std::get<3>(a) < std::get<3>(b);
+    });
+
+    int written = 0;
+
+    log << "\nTOP_GRID_CANDIDATES\n";
+
+    for (const auto& row : scored)
+    {
+        int score = std::get<0>(row);
+        const std::string& kind = std::get<1>(row);
+        const std::string& pair_label = std::get<2>(row);
+        int landscape_id = std::get<3>(row);
+        const GridAgg& a = std::get<4>(row);
+
+        int ux = static_cast<int>(a.xs.size());
+        int uy = static_cast<int>(a.ys.size());
+        int spacing_x = phase8g_guess_spacing(a.xs);
+        int spacing_y = phase8g_guess_spacing(a.ys);
+
+        std::string grid_guess = std::to_string(ux) + "x" + std::to_string(uy);
+
+        grid << run << ","
+             << delay_seconds << ","
+             << "\"" << kind << "\","
+             << "\"" << pair_label << "\","
+             << landscape_id << ","
+             << a.count << ","
+             << ux << ","
+             << uy << ","
+             << a.minx << ","
+             << a.maxx << ","
+             << a.miny << ","
+             << a.maxy << ","
+             << spacing_x << ","
+             << spacing_y << ","
+             << "\"" << grid_guess << "\","
+             << score << ","
+             << "\"" << phase8g_join_set(a.xs, 30) << "\","
+             << "\"" << phase8g_join_set(a.ys, 30) << "\""
+             << "\n";
+
+        if (written < 80)
+        {
+            log << "score=" << score
+                << " kind=" << kind
+                << " pair=" << pair_label
+                << " landscape=" << landscape_id
+                << " count=" << a.count
+                << " grid=" << grid_guess
+                << " x=[" << a.minx << "," << a.maxx << "]"
+                << " y=[" << a.miny << "," << a.maxy << "]"
+                << " spacing=" << spacing_x << "/" << spacing_y
+                << " xs=" << phase8g_join_set(a.xs, 12)
+                << " ys=" << phase8g_join_set(a.ys, 12)
+                << "\n";
+        }
+
+        written++;
+    }
+
+    log << "\nSUMMARY\n";
+    log << "grid_candidate_rows=" << written << "\n";
+    log << "csv_rows_written=" << rows.size() * pair_count << "\n";
+
+    file_log("Phase 8G done run=" + std::to_string(run) + " rows=" + std::to_string(rows.size()) + " grid_candidates=" + std::to_string(written));
+}
+
+static void start_phase8g_grid_and_section_confirmation()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 8G grid and section confirmation started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase8g_grid_and_section_confirmation_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 8G grid and section confirmation finished");
+    }).detach();
+}
+// END PHASE8G_GRID_AND_SECTION_CONFIRMATION
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -5692,18 +6160,19 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.16.0");
+        ModVersion = STR("1.17.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.16.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.16.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.17.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.17.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
-        start_phase8f_offset_value_matrix();
+        // disabled v1.17.0: start_phase8f_offset_value_matrix();
+        start_phase8g_grid_and_section_confirmation();
     }
 
     auto on_update() -> void override
