@@ -7932,6 +7932,520 @@ static void start_phase8k_rootcomponent_precision()
 
 
 
+
+
+// BEGIN PHASE8L_WORLDMAP_EXPORT
+
+static int32_t phase8l_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase8l_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static int phase8l_extract_int_after(const std::string& text, const std::string& token)
+{
+    size_t pos = text.rfind(token);
+    if (pos == std::string::npos) return -1;
+    pos += token.size();
+
+    std::string digits;
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+    {
+        digits.push_back(text[pos]);
+        pos++;
+    }
+
+    if (digits.empty()) return -1;
+
+    try { return std::stoi(digits); }
+    catch (...) { return -1; }
+}
+
+static int phase8l_spacing(const std::set<int32_t>& values)
+{
+    if (values.size() < 2) return 0;
+
+    std::vector<int32_t> v(values.begin(), values.end());
+    std::map<int, int> freq;
+
+    for (size_t i = 1; i < v.size(); ++i)
+    {
+        int d = std::abs(v[i] - v[i - 1]);
+        if (d > 0 && d < 10000) freq[d]++;
+    }
+
+    int best = 0;
+    int best_count = 0;
+
+    for (const auto& kv : freq)
+    {
+        if (kv.second > best_count)
+        {
+            best = kv.first;
+            best_count = kv.second;
+        }
+    }
+
+    return best;
+}
+
+static UObject* phase8l_find_k2_get_actor_location()
+{
+    UObject* found = nullptr;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o || found) return RC::LoopAction::Continue;
+
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+            std::string cls = class_name(o);
+
+            if (cls.find("Function") != std::string::npos &&
+                name == "K2_GetActorLocation" &&
+                path.find("/Script/Engine.Actor:K2_GetActorLocation") != std::string::npos)
+            {
+                found = o;
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    return found;
+}
+
+static void write_phase8l_worldmap_export_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase8l_summary.txt", std::ios::app);
+    std::ofstream islands_csv(out / "phase8l_worldmap_islands.csv", std::ios::app);
+    std::ofstream comps_csv(out / "phase8l_worldmap_components.csv", std::ios::app);
+    std::ofstream manifest(out / "phase8l_export_manifest.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        islands_csv
+            << "run,delay_seconds,landscape_id,actor_name,actor_path,actor_addr,"
+            << "world_x,world_y,world_z,"
+            << "root_ptr,root_class,root_name,root_path,"
+            << "actor_spacing_x_1960,actor_spacing_y_1964,"
+            << "bounds_spacing_x,bounds_spacing_y,spacing_match,"
+            << "component_count,grid_x,grid_y,min_section_x,max_section_x,min_section_y,max_section_y,"
+            << "world_min_x_guess,world_max_x_guess,world_min_y_guess,world_max_y_guess,"
+            << "export_status\n";
+
+        comps_csv
+            << "run,delay_seconds,landscape_id,component_id,component_type,"
+            << "section_x,section_y,local_grid_x,local_grid_y,"
+            << "island_world_x,island_world_y,island_world_z,"
+            << "spacing_x,spacing_y,"
+            << "component_world_x_guess,component_world_y_guess,"
+            << "component_path,component_addr\n";
+    }
+
+    struct Bounds
+    {
+        int count = 0;
+        int32_t minx = INT32_MAX;
+        int32_t maxx = INT32_MIN;
+        int32_t miny = INT32_MAX;
+        int32_t maxy = INT32_MIN;
+        std::set<int32_t> xs;
+        std::set<int32_t> ys;
+    };
+
+    struct Actor
+    {
+        int landscape_id = -1;
+        std::string name;
+        std::string path;
+        UObject* obj = nullptr;
+    };
+
+    struct Component
+    {
+        int landscape_id = -1;
+        int component_id = -1;
+        std::string type;
+        int32_t section_x = 0;
+        int32_t section_y = 0;
+        std::string path;
+        UObject* obj = nullptr;
+    };
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::vector<Actor> actors;
+    std::vector<Component> collision_components;
+    std::map<int, Bounds> bounds;
+    std::map<uintptr_t, ObjInfo> object_by_addr;
+
+    int scanned = 0;
+    int landscape_components_seen = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            ObjInfo oi{};
+            oi.obj = o;
+            oi.cls = cls;
+            oi.name = name;
+            oi.path = path;
+            object_by_addr[reinterpret_cast<uintptr_t>(o)] = oi;
+
+            bool runtime =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!runtime) return RC::LoopAction::Continue;
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
+
+            bool is_landscape_actor = cls == "Landscape";
+            bool is_collision = cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            bool is_component = cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos;
+
+            if (is_component) landscape_components_seen++;
+
+            if (is_landscape_actor)
+            {
+                Actor a{};
+                a.landscape_id = phase8l_extract_int_after(path, "Landscape_");
+                a.name = name;
+                a.path = path;
+                a.obj = o;
+                actors.push_back(a);
+            }
+
+            if (is_collision)
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(o);
+
+                Component c{};
+                c.landscape_id = phase8l_extract_int_after(path, "Landscape_");
+                c.component_id = phase8l_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_");
+                c.type = "collision";
+                c.section_x = phase8l_i32(base, 1296);
+                c.section_y = phase8l_i32(base, 1300);
+                c.path = path;
+                c.obj = o;
+
+                collision_components.push_back(c);
+
+                auto& b = bounds[c.landscape_id];
+                b.count++;
+                b.minx = std::min(b.minx, c.section_x);
+                b.maxx = std::max(b.maxx, c.section_x);
+                b.miny = std::min(b.miny, c.section_y);
+                b.maxy = std::max(b.maxy, c.section_y);
+                b.xs.insert(c.section_x);
+                b.ys.insert(c.section_y);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(actors.begin(), actors.end(), [](const Actor& a, const Actor& b)
+    {
+        return a.landscape_id < b.landscape_id;
+    });
+
+    std::sort(collision_components.begin(), collision_components.end(), [](const Component& a, const Component& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        if (a.section_x != b.section_x) return a.section_x < b.section_x;
+        if (a.section_y != b.section_y) return a.section_y < b.section_y;
+        return a.component_id < b.component_id;
+    });
+
+    UObject* k2_func = phase8l_find_k2_get_actor_location();
+
+    struct Vec3Params
+    {
+        double X;
+        double Y;
+        double Z;
+    };
+
+    struct IslandExport
+    {
+        double wx = 0;
+        double wy = 0;
+        double wz = 0;
+        bool has_location = false;
+        int spacing_x = 0;
+        int spacing_y = 0;
+        int actor_spacing_x = 0;
+        int actor_spacing_y = 0;
+        int grid_x = 0;
+        int grid_y = 0;
+        int minx = 0;
+        int maxx = 0;
+        int miny = 0;
+        int maxy = 0;
+    };
+
+    std::map<int, IslandExport> island_export;
+
+    int k2_success = 0;
+    int roots_found = 0;
+    int islands_written = 0;
+    int components_written = 0;
+
+    for (const auto& a : actors)
+    {
+        uint8_t* actor_base = reinterpret_cast<uint8_t*>(a.obj);
+
+        uintptr_t root_ptr = phase8l_ptr(actor_base, 440);
+        int actor_spacing_x = phase8l_i32(actor_base, 1960);
+        int actor_spacing_y = phase8l_i32(actor_base, 1964);
+
+        ObjInfo root_info{};
+        bool root_ok = false;
+
+        auto rit = object_by_addr.find(root_ptr);
+        if (rit != object_by_addr.end())
+        {
+            root_info = rit->second;
+            root_ok = true;
+            roots_found++;
+        }
+
+        int bounds_spacing_x = -1;
+        int bounds_spacing_y = -1;
+        int grid_x = 0;
+        int grid_y = 0;
+        int minx = 0;
+        int maxx = 0;
+        int miny = 0;
+        int maxy = 0;
+        int component_count = 0;
+
+        auto bit = bounds.find(a.landscape_id);
+        if (bit != bounds.end())
+        {
+            const Bounds& b = bit->second;
+            bounds_spacing_x = phase8l_spacing(b.xs);
+            bounds_spacing_y = phase8l_spacing(b.ys);
+            grid_x = static_cast<int>(b.xs.size());
+            grid_y = static_cast<int>(b.ys.size());
+            minx = b.minx;
+            maxx = b.maxx;
+            miny = b.miny;
+            maxy = b.maxy;
+            component_count = b.count;
+        }
+
+        bool spacing_match = actor_spacing_x == bounds_spacing_x && actor_spacing_y == bounds_spacing_y;
+
+        Vec3Params loc{};
+        bool has_location = false;
+
+        if (k2_func)
+        {
+            try
+            {
+                a.obj->ProcessEvent(reinterpret_cast<UFunction*>(k2_func), &loc);
+                has_location = true;
+                k2_success++;
+            }
+            catch (...)
+            {
+                has_location = false;
+            }
+        }
+
+        IslandExport ie{};
+        ie.wx = loc.X;
+        ie.wy = loc.Y;
+        ie.wz = loc.Z;
+        ie.has_location = has_location;
+        ie.spacing_x = bounds_spacing_x;
+        ie.spacing_y = bounds_spacing_y;
+        ie.actor_spacing_x = actor_spacing_x;
+        ie.actor_spacing_y = actor_spacing_y;
+        ie.grid_x = grid_x;
+        ie.grid_y = grid_y;
+        ie.minx = minx;
+        ie.maxx = maxx;
+        ie.miny = miny;
+        ie.maxy = maxy;
+        island_export[a.landscape_id] = ie;
+
+        double world_min_x_guess = loc.X + static_cast<double>(minx) * static_cast<double>(bounds_spacing_x);
+        double world_max_x_guess = loc.X + static_cast<double>(maxx) * static_cast<double>(bounds_spacing_x);
+        double world_min_y_guess = loc.Y + static_cast<double>(miny) * static_cast<double>(bounds_spacing_y);
+        double world_max_y_guess = loc.Y + static_cast<double>(maxy) * static_cast<double>(bounds_spacing_y);
+
+        std::string status = "ok";
+        if (!has_location) status = "missing_k2_location";
+        if (!spacing_match) status = "spacing_mismatch";
+        if (component_count <= 0) status = "missing_components";
+
+        islands_csv << run << ","
+                    << delay_seconds << ","
+                    << a.landscape_id << ","
+                    << "\"" << a.name << "\","
+                    << "\"" << a.path << "\","
+                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(a.obj) << std::dec << "\","
+                    << loc.X << ","
+                    << loc.Y << ","
+                    << loc.Z << ","
+                    << "\"0x" << std::hex << root_ptr << std::dec << "\","
+                    << "\"" << (root_ok ? root_info.cls : std::string("")) << "\","
+                    << "\"" << (root_ok ? root_info.name : std::string("")) << "\","
+                    << "\"" << (root_ok ? root_info.path : std::string("")) << "\","
+                    << actor_spacing_x << ","
+                    << actor_spacing_y << ","
+                    << bounds_spacing_x << ","
+                    << bounds_spacing_y << ","
+                    << (spacing_match ? "1" : "0") << ","
+                    << component_count << ","
+                    << grid_x << ","
+                    << grid_y << ","
+                    << minx << ","
+                    << maxx << ","
+                    << miny << ","
+                    << maxy << ","
+                    << world_min_x_guess << ","
+                    << world_max_x_guess << ","
+                    << world_min_y_guess << ","
+                    << world_max_y_guess << ","
+                    << "\"" << status << "\"\n";
+
+        islands_written++;
+    }
+
+    for (const auto& c : collision_components)
+    {
+        auto iit = island_export.find(c.landscape_id);
+        if (iit == island_export.end()) continue;
+
+        const IslandExport& ie = iit->second;
+
+        int local_grid_x = 0;
+        int local_grid_y = 0;
+
+        if (ie.spacing_x > 0) local_grid_x = (c.section_x - ie.minx) / ie.spacing_x;
+        if (ie.spacing_y > 0) local_grid_y = (c.section_y - ie.miny) / ie.spacing_y;
+
+        double component_world_x_guess =
+            ie.wx + static_cast<double>(c.section_x) * static_cast<double>(ie.spacing_x);
+
+        double component_world_y_guess =
+            ie.wy + static_cast<double>(c.section_y) * static_cast<double>(ie.spacing_y);
+
+        comps_csv << run << ","
+                  << delay_seconds << ","
+                  << c.landscape_id << ","
+                  << c.component_id << ","
+                  << "\"" << c.type << "\","
+                  << c.section_x << ","
+                  << c.section_y << ","
+                  << local_grid_x << ","
+                  << local_grid_y << ","
+                  << ie.wx << ","
+                  << ie.wy << ","
+                  << ie.wz << ","
+                  << ie.spacing_x << ","
+                  << ie.spacing_y << ","
+                  << component_world_x_guess << ","
+                  << component_world_y_guess << ","
+                  << "\"" << c.path << "\","
+                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << std::dec << "\"\n";
+
+        components_written++;
+    }
+
+    summary << "\n===== PHASE 8L RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "landscape_actors=" << actors.size() << "\n";
+    summary << "collision_components=" << collision_components.size() << "\n";
+    summary << "landscape_components_seen=" << landscape_components_seen << "\n";
+    summary << "islands_from_collision_bounds=" << bounds.size() << "\n";
+    summary << "confirmed_sectionbase_offsets=collision+1296/+1300\n";
+    summary << "confirmed_rootcomponent_actor_offset=440\n";
+    summary << "confirmed_spacing_offset=1960/1964\n";
+    summary << "k2_function_found=" << (k2_func ? "1" : "0") << "\n";
+    summary << "k2_success=" << k2_success << "\n";
+    summary << "roots_found=" << roots_found << "\n";
+    summary << "islands_written=" << islands_written << "\n";
+    summary << "components_written=" << components_written << "\n";
+    summary << "DECISION=worldmap_export_written\n";
+
+    manifest << "\n===== PHASE 8L EXPORT MANIFEST RUN " << run << " =====\n";
+    manifest << "phase8l_worldmap_islands.csv = authoritative island/origin/grid export\n";
+    manifest << "phase8l_worldmap_components.csv = component-level worldmap export using SectionBaseX/Y\n";
+    manifest << "formula_component_world_x_guess = island_world_x + section_x * spacing_x\n";
+    manifest << "formula_component_world_y_guess = island_world_y + section_y * spacing_y\n";
+    manifest << "note = if rendered map appears scaled/offset, admin panel can normalize from exported world_min/max bounds\n";
+
+    file_log("Phase 8L done run=" + std::to_string(run) +
+             " islands=" + std::to_string(islands_written) +
+             " components=" + std::to_string(components_written) +
+             " k2=" + std::to_string(k2_success));
+}
+
+static void start_phase8l_worldmap_export()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 8L worldmap export started");
+
+    std::thread([]()
+    {
+        const int delays[] = {240, 420};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase8l_worldmap_export_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 8L worldmap export finished");
+    }).detach();
+}
+
+// END PHASE8L_WORLDMAP_EXPORT
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -8018,15 +8532,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.21.0");
+        ModVersion = STR("1.22.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.21.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.21.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.22.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.22.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -8035,7 +8549,8 @@ public:
         // disabled v1.19.0: start_phase8h2_safe_world_bounds();
         // disabled v1.20.0: start_phase8i_actor_transform_scan();
         // disabled v1.21.0: start_phase8j_root_location_scan();
-        start_phase8k_rootcomponent_precision();
+        // disabled v1.22.0: start_phase8k_rootcomponent_precision();
+        start_phase8l_worldmap_export();
     }
 
     auto on_update() -> void override
