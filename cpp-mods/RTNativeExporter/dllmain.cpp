@@ -9282,6 +9282,473 @@ static void start_phase9a_rt_array_probe()
 
 
 
+
+
+// BEGIN PHASE9B_SAFE_READBACK_PROBE
+
+struct Phase9BLinearColor
+{
+    float R;
+    float G;
+    float B;
+    float A;
+};
+
+struct Phase9BColor
+{
+    uint8_t B;
+    uint8_t G;
+    uint8_t R;
+    uint8_t A;
+};
+
+static bool phase9b_valid_color(float v)
+{
+    return std::isfinite(v) && std::abs(v) < 1000000.0f;
+}
+
+static bool phase9b_is_target_array_path(const std::string& path)
+{
+    return path.find("RT_LandscapeHeights") != std::string::npos ||
+           path.find("RT_LandscapeTable") != std::string::npos ||
+           path.find("RT_Biomes") != std::string::npos ||
+           path.find("RT_SubBiomes") != std::string::npos ||
+           path.find("RT_BiomeDistanceFields") != std::string::npos;
+}
+
+static std::string phase9b_label(const std::string& path)
+{
+    if (path.find("RT_LandscapeHeights") != std::string::npos) return "RT_LandscapeHeights";
+    if (path.find("RT_LandscapeTable") != std::string::npos) return "RT_LandscapeTable";
+    if (path.find("RT_Biomes") != std::string::npos) return "RT_Biomes";
+    if (path.find("RT_SubBiomes") != std::string::npos) return "RT_SubBiomes";
+    if (path.find("RT_BiomeDistanceFields") != std::string::npos) return "RT_BiomeDistanceFields";
+    if (path.find("RT_MapCapture") != std::string::npos) return "RT_MapCapture";
+    if (path.find("RT_MapFog") != std::string::npos) return "RT_MapFog";
+    return "";
+}
+
+static UObject* phase9b_find_object_exact(const std::string& wanted_path)
+{
+    UObject* found = nullptr;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o || found) return RC::LoopAction::Continue;
+
+            std::string path = obj_path(o);
+            if (path == wanted_path)
+            {
+                found = o;
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    return found;
+}
+
+static UObject* phase9b_find_function_exact(const std::string& path_suffix)
+{
+    UObject* found = nullptr;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o || found) return RC::LoopAction::Continue;
+
+            std::string cls = class_name(o);
+            std::string path = obj_path(o);
+
+            if (cls.find("Function") != std::string::npos &&
+                path.find(path_suffix) != std::string::npos)
+            {
+                found = o;
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    return found;
+}
+
+static void write_phase9b_safe_readback_probe_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9b_summary.txt", std::ios::app);
+    std::ofstream baseline_csv(out / "phase9b_2d_baseline_readback.csv", std::ios::app);
+    std::ofstream array_csv(out / "phase9b_array_targets_guarded.csv", std::ios::app);
+    std::ofstream funcs_csv(out / "phase9b_function_resolution.csv", std::ios::app);
+    std::ofstream notes(out / "phase9b_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        baseline_csv << "run,delay_seconds,target_label,target_path,target_class,method,u,v,x,y,called,success,r,g,b,a,note\n";
+        array_csv << "run,delay_seconds,label,path,class,addr,action,note\n";
+        funcs_csv << "run,delay_seconds,function_label,found,path,class,addr\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::vector<ObjInfo> targets_2d;
+    std::vector<ObjInfo> array_targets;
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            if ((path.find("RT_MapCapture.RT_MapCapture") != std::string::npos ||
+                 path.find("RT_MapFog.RT_MapFog") != std::string::npos) &&
+                cls.find("TextureRenderTarget2D") != std::string::npos &&
+                cls.find("Array") == std::string::npos)
+            {
+                ObjInfo t{};
+                t.obj = o;
+                t.cls = cls;
+                t.name = name;
+                t.path = path;
+                targets_2d.push_back(t);
+            }
+
+            if (phase9b_is_target_array_path(path) &&
+                cls.find("TextureRenderTarget2DArray") != std::string::npos)
+            {
+                ObjInfo t{};
+                t.obj = o;
+                t.cls = cls;
+                t.name = name;
+                t.path = path;
+                array_targets.push_back(t);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    UObject* kismet_cdo = phase9b_find_object_exact("/Script/Engine.Default__KismetRenderingLibrary");
+    UObject* read_raw_uv = phase9b_find_function_exact("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawUV");
+    UObject* read_raw_pixel = phase9b_find_function_exact("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawPixel");
+    UObject* read_pixel = phase9b_find_function_exact("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetPixel");
+
+    auto write_func = [&](const std::string& label, UObject* fn)
+    {
+        funcs_csv << run << ","
+                  << delay_seconds << ","
+                  << "\"" << label << "\","
+                  << (fn ? "1" : "0") << ","
+                  << "\"" << (fn ? obj_path(fn) : std::string("")) << "\","
+                  << "\"" << (fn ? class_name(fn) : std::string("")) << "\","
+                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(fn) << std::dec << "\"\n";
+    };
+
+    write_func("Default__KismetRenderingLibrary", kismet_cdo);
+    write_func("ReadRenderTargetRawUV", read_raw_uv);
+    write_func("ReadRenderTargetRawPixel", read_raw_pixel);
+    write_func("ReadRenderTargetPixel", read_pixel);
+
+    for (const auto& arr : array_targets)
+    {
+        array_csv << run << ","
+                  << delay_seconds << ","
+                  << "\"" << phase9b_label(arr.path) << "\","
+                  << "\"" << arr.path << "\","
+                  << "\"" << arr.cls << "\","
+                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(arr.obj) << std::dec << "\","
+                  << "\"skip_process_event\","
+                  << "\"TextureRenderTarget2DArray is intentionally not passed to TextureRenderTarget2D read functions in 9B\"\n";
+    }
+
+    int raw_uv_calls = 0;
+    int raw_uv_success = 0;
+    int raw_pixel_calls = 0;
+    int raw_pixel_success = 0;
+    int pixel_calls = 0;
+    int pixel_success = 0;
+
+    const float uvs[][2] = {
+        {0.5f, 0.5f},
+        {0.25f, 0.25f},
+        {0.75f, 0.75f}
+    };
+
+    for (const auto& target : targets_2d)
+    {
+        std::string label = phase9b_label(target.path);
+
+        if (kismet_cdo && read_raw_uv)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                struct Params
+                {
+                    UObject* WorldContextObject;
+                    UObject* TextureRenderTarget;
+                    float U;
+                    float V;
+                    Phase9BLinearColor ReturnValue;
+                };
+
+                Params params{};
+                params.WorldContextObject = kismet_cdo;
+                params.TextureRenderTarget = target.obj;
+                params.U = uvs[i][0];
+                params.V = uvs[i][1];
+                params.ReturnValue = {0, 0, 0, 0};
+
+                bool called = false;
+                bool success = false;
+                std::string note = "not_called";
+
+                try
+                {
+                    kismet_cdo->ProcessEvent(reinterpret_cast<UFunction*>(read_raw_uv), &params);
+                    called = true;
+                    raw_uv_calls++;
+
+                    success =
+                        phase9b_valid_color(params.ReturnValue.R) &&
+                        phase9b_valid_color(params.ReturnValue.G) &&
+                        phase9b_valid_color(params.ReturnValue.B) &&
+                        phase9b_valid_color(params.ReturnValue.A);
+
+                    if (success) raw_uv_success++;
+                    note = success ? "ok" : "returned_invalid_color";
+                }
+                catch (...)
+                {
+                    called = false;
+                    success = false;
+                    note = "exception";
+                }
+
+                baseline_csv << run << ","
+                             << delay_seconds << ","
+                             << "\"" << label << "\","
+                             << "\"" << target.path << "\","
+                             << "\"" << target.cls << "\","
+                             << "\"ReadRenderTargetRawUV\","
+                             << params.U << ","
+                             << params.V << ","
+                             << "-1,-1,"
+                             << (called ? "1" : "0") << ","
+                             << (success ? "1" : "0") << ","
+                             << params.ReturnValue.R << ","
+                             << params.ReturnValue.G << ","
+                             << params.ReturnValue.B << ","
+                             << params.ReturnValue.A << ","
+                             << "\"" << note << "\"\n";
+            }
+        }
+
+        if (kismet_cdo && read_raw_pixel)
+        {
+            struct Params
+            {
+                UObject* WorldContextObject;
+                UObject* TextureRenderTarget;
+                int32_t X;
+                int32_t Y;
+                Phase9BLinearColor ReturnValue;
+            };
+
+            Params params{};
+            params.WorldContextObject = kismet_cdo;
+            params.TextureRenderTarget = target.obj;
+            params.X = 0;
+            params.Y = 0;
+            params.ReturnValue = {0, 0, 0, 0};
+
+            bool called = false;
+            bool success = false;
+            std::string note = "not_called";
+
+            try
+            {
+                kismet_cdo->ProcessEvent(reinterpret_cast<UFunction*>(read_raw_pixel), &params);
+                called = true;
+                raw_pixel_calls++;
+
+                success =
+                    phase9b_valid_color(params.ReturnValue.R) &&
+                    phase9b_valid_color(params.ReturnValue.G) &&
+                    phase9b_valid_color(params.ReturnValue.B) &&
+                    phase9b_valid_color(params.ReturnValue.A);
+
+                if (success) raw_pixel_success++;
+                note = success ? "ok" : "returned_invalid_color";
+            }
+            catch (...)
+            {
+                called = false;
+                success = false;
+                note = "exception";
+            }
+
+            baseline_csv << run << ","
+                         << delay_seconds << ","
+                         << "\"" << label << "\","
+                         << "\"" << target.path << "\","
+                         << "\"" << target.cls << "\","
+                         << "\"ReadRenderTargetRawPixel\","
+                         << "-1,-1,"
+                         << params.X << ","
+                         << params.Y << ","
+                         << (called ? "1" : "0") << ","
+                         << (success ? "1" : "0") << ","
+                         << params.ReturnValue.R << ","
+                         << params.ReturnValue.G << ","
+                         << params.ReturnValue.B << ","
+                         << params.ReturnValue.A << ","
+                         << "\"" << note << "\"\n";
+        }
+
+        if (kismet_cdo && read_pixel)
+        {
+            struct Params
+            {
+                UObject* WorldContextObject;
+                UObject* TextureRenderTarget;
+                int32_t X;
+                int32_t Y;
+                Phase9BColor ReturnValue;
+            };
+
+            Params params{};
+            params.WorldContextObject = kismet_cdo;
+            params.TextureRenderTarget = target.obj;
+            params.X = 0;
+            params.Y = 0;
+            params.ReturnValue = {0, 0, 0, 0};
+
+            bool called = false;
+            bool success = false;
+            std::string note = "not_called";
+
+            try
+            {
+                kismet_cdo->ProcessEvent(reinterpret_cast<UFunction*>(read_pixel), &params);
+                called = true;
+                pixel_calls++;
+                success = true;
+                pixel_success++;
+                note = "ok";
+            }
+            catch (...)
+            {
+                called = false;
+                success = false;
+                note = "exception";
+            }
+
+            baseline_csv << run << ","
+                         << delay_seconds << ","
+                         << "\"" << label << "\","
+                         << "\"" << target.path << "\","
+                         << "\"" << target.cls << "\","
+                         << "\"ReadRenderTargetPixel\","
+                         << "-1,-1,"
+                         << params.X << ","
+                         << params.Y << ","
+                         << (called ? "1" : "0") << ","
+                         << (success ? "1" : "0") << ","
+                         << static_cast<int>(params.ReturnValue.R) << ","
+                         << static_cast<int>(params.ReturnValue.G) << ","
+                         << static_cast<int>(params.ReturnValue.B) << ","
+                         << static_cast<int>(params.ReturnValue.A) << ","
+                         << "\"" << note << "\"\n";
+        }
+    }
+
+    notes << "\n===== PHASE 9B NOTES RUN " << run << " =====\n";
+    notes << "9B intentionally tests readback only on known TextureRenderTarget2D targets RT_MapCapture/RT_MapFog.\n";
+    notes << "The five terrain targets are TextureRenderTarget2DArray and are not passed into 2D read functions in this phase.\n";
+    notes << "If 2D baseline succeeds, next phase should use a copy/slice/material route or native RHI route for 2DArray slices.\n";
+
+    summary << "\n===== PHASE 9B RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "kismet_cdo_found=" << (kismet_cdo ? "1" : "0") << "\n";
+    summary << "read_raw_uv_found=" << (read_raw_uv ? "1" : "0") << "\n";
+    summary << "read_raw_pixel_found=" << (read_raw_pixel ? "1" : "0") << "\n";
+    summary << "read_pixel_found=" << (read_pixel ? "1" : "0") << "\n";
+    summary << "targets_2d=" << targets_2d.size() << "\n";
+    summary << "terrain_array_targets=" << array_targets.size() << "\n";
+    summary << "raw_uv_calls=" << raw_uv_calls << "\n";
+    summary << "raw_uv_success=" << raw_uv_success << "\n";
+    summary << "raw_pixel_calls=" << raw_pixel_calls << "\n";
+    summary << "raw_pixel_success=" << raw_pixel_success << "\n";
+    summary << "pixel_calls=" << pixel_calls << "\n";
+    summary << "pixel_success=" << pixel_success << "\n";
+
+    if (raw_uv_success > 0 || raw_pixel_success > 0 || pixel_success > 0)
+    {
+        summary << "DECISION=2d_readback_baseline_works\n";
+    }
+    else
+    {
+        summary << "DECISION=2d_readback_baseline_failed_or_blocked\n";
+    }
+
+    file_log("Phase 9B done run=" + std::to_string(run) +
+             " 2d_targets=" + std::to_string(targets_2d.size()) +
+             " arrays=" + std::to_string(array_targets.size()) +
+             " raw_uv_success=" + std::to_string(raw_uv_success) +
+             " raw_pixel_success=" + std::to_string(raw_pixel_success) +
+             " pixel_success=" + std::to_string(pixel_success));
+}
+
+static void start_phase9b_safe_readback_probe()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9B safe readback probe started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase9b_safe_readback_probe_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9B safe readback probe finished");
+    }).detach();
+}
+
+// END PHASE9B_SAFE_READBACK_PROBE
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -9368,15 +9835,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.24.0");
+        ModVersion = STR("1.25.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.24.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.24.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.25.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.25.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -9388,7 +9855,8 @@ public:
         // disabled v1.22.0: start_phase8k_rootcomponent_precision();
         // disabled v1.23.0: start_phase8l_worldmap_export();
         // disabled v1.24.0: start_phase8m_component_location_validation();
-        start_phase9a_rt_array_probe();
+        // disabled v1.25.0: start_phase9a_rt_array_probe();
+        start_phase9b_safe_readback_probe();
     }
 
     auto on_update() -> void override
