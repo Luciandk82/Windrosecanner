@@ -5305,6 +5305,307 @@ static void start_phase8e_timed_layout_memory_probes()
 }
 // END PHASE8E_TIMED_LAYOUT_MEMORY_PROBES
 
+
+
+// BEGIN PHASE8F_OFFSET_VALUE_MATRIX
+static int phase8f_extract_int_after(const std::string& text, const std::string& token)
+{
+    size_t pos = text.rfind(token);
+    if (pos == std::string::npos) return -1;
+
+    pos += token.size();
+
+    std::string digits;
+    while (pos < text.size() && text[pos] >= '0' && text[pos] <= '9')
+    {
+        digits.push_back(text[pos]);
+        pos++;
+    }
+
+    if (digits.empty()) return -1;
+
+    try
+    {
+        return std::stoi(digits);
+    }
+    catch (...)
+    {
+        return -1;
+    }
+}
+
+static int32_t phase8f_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uint32_t phase8f_u32(uint8_t* base, size_t off)
+{
+    uint32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static float phase8f_f32(uint8_t* base, size_t off)
+{
+    float v = 0.0f;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase8f_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase8f_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static void write_phase8f_offset_value_matrix_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream log(out / "phase8f_offset_value_matrix_summary.txt", std::ios::app);
+    std::ofstream csv(out / "phase8f_offset_value_matrix.csv", std::ios::app);
+
+    struct Rec
+    {
+        std::string kind;
+        std::string cls;
+        std::string name;
+        std::string path;
+        uintptr_t addr;
+        int landscape_id;
+        int component_id;
+        UObject* obj;
+    };
+
+    std::vector<Rec> rows;
+
+    int scanned = 0;
+    int collisions = 0;
+    int components = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            bool runtime =
+                path.find("/Game/Maps/GYM/Genlandia/GenlandiaMulty") != std::string::npos &&
+                path.find("PersistentLevel") != std::string::npos;
+
+            if (!runtime) return RC::LoopAction::Continue;
+            if (path.find("Default__") != std::string::npos) return RC::LoopAction::Continue;
+
+            bool is_collision = cls.find("LandscapeHeightfieldCollisionComponent") != std::string::npos;
+            bool is_component = cls == "LandscapeComponent" || cls.find("LandscapeComponent") != std::string::npos;
+
+            if (!is_collision && !is_component) return RC::LoopAction::Continue;
+
+            Rec r{};
+            r.kind = is_collision ? "collision" : "landscape_component";
+            r.cls = cls;
+            r.name = name;
+            r.path = path;
+            r.addr = reinterpret_cast<uintptr_t>(o);
+            r.landscape_id = phase8f_extract_int_after(path, "Landscape_");
+            r.component_id = is_collision
+                ? phase8f_extract_int_after(path, "LandscapeHeightfieldCollisionComponent_")
+                : phase8f_extract_int_after(path, "LandscapeComponent_");
+            r.obj = o;
+
+            rows.push_back(r);
+
+            if (is_collision) collisions++;
+            if (is_component) components++;
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(rows.begin(), rows.end(), [](const Rec& a, const Rec& b)
+    {
+        if (a.landscape_id != b.landscape_id) return a.landscape_id < b.landscape_id;
+        if (a.kind != b.kind) return a.kind < b.kind;
+        if (a.component_id != b.component_id) return a.component_id < b.component_id;
+        return a.path < b.path;
+    });
+
+    log << "\n===== PHASE 8F RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    log << "scanned_objects=" << scanned << "\n";
+    log << "rows=" << rows.size() << "\n";
+    log << "collisions=" << collisions << "\n";
+    log << "landscape_components=" << components << "\n";
+
+    if (rows.empty() || collisions == 0 || components == 0)
+    {
+        log << "DECISION=skip_not_loaded\n";
+        file_log("Phase 8F skip run=" + std::to_string(run));
+        return;
+    }
+
+    log << "DECISION=write_offset_matrix\n";
+
+    const size_t offsets[] = {
+        4, 8, 12, 20, 24, 44, 52, 60,
+        136, 140, 416, 440,
+        580, 588, 596, 612, 616, 624, 632, 636, 640,
+        720, 764, 788, 864, 868, 876,
+        916, 924, 960, 972, 980,
+        1000, 1004,
+        1176, 1180, 1208,
+        1284, 1288, 1292, 1296, 1300, 1304,
+        1328, 1332, 1344, 1348, 1360, 1364,
+        1400, 1504, 1524,
+        1684, 1688, 1732, 1740, 1748, 1752, 1760,
+        1796, 1804, 1812, 1816, 1824,
+        1880, 1888, 1944, 1952,
+        2000, 2020, 2040, 2060, 2080, 2120
+    };
+
+    const size_t offset_count = sizeof(offsets) / sizeof(offsets[0]);
+
+    if (run == 1)
+    {
+        csv << "run,delay_seconds,kind,class,name,path,addr,landscape_id,component_id";
+
+        for (size_t i = 0; i < offset_count; ++i)
+        {
+            csv << ",i32_" << offsets[i];
+            csv << ",u32_" << offsets[i];
+            csv << ",f32_" << offsets[i];
+            csv << ",ptr_" << offsets[i];
+            csv << ",ptrlike_" << offsets[i];
+        }
+
+        csv << "\n";
+    }
+
+    std::map<size_t, int> distinct_count_hint;
+    std::map<size_t, std::map<int32_t, int>> i32_freq;
+    std::map<size_t, std::map<uint32_t, int>> u32_freq;
+
+    for (const auto& r : rows)
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(r.obj);
+
+        csv << run << ","
+            << delay_seconds << ","
+            << "\"" << r.kind << "\","
+            << "\"" << r.cls << "\","
+            << "\"" << r.name << "\","
+            << "\"" << r.path << "\","
+            << "\"0x" << std::hex << r.addr << std::dec << "\","
+            << r.landscape_id << ","
+            << r.component_id;
+
+        for (size_t i = 0; i < offset_count; ++i)
+        {
+            size_t off = offsets[i];
+
+            int32_t i32 = phase8f_i32(base, off);
+            uint32_t u32 = phase8f_u32(base, off);
+            float f32 = phase8f_f32(base, off);
+            uintptr_t ptr = phase8f_ptr(base, off);
+            bool ptrlike = phase8f_probably_ptr(ptr);
+
+            i32_freq[off][i32]++;
+            u32_freq[off][u32]++;
+
+            csv << "," << i32
+                << "," << u32
+                << "," << f32
+                << ",0x" << std::hex << ptr << std::dec
+                << "," << (ptrlike ? "1" : "0");
+        }
+
+        csv << "\n";
+    }
+
+    log << "\nOFFSET_VALUE_SUMMARY_TOP\n";
+
+    for (size_t i = 0; i < offset_count; ++i)
+    {
+        size_t off = offsets[i];
+
+        log << "OFFSET " << off
+            << " i32_distinct=" << i32_freq[off].size()
+            << " u32_distinct=" << u32_freq[off].size();
+
+        auto emit_top_i32 = [&](const std::map<int32_t, int>& freq)
+        {
+            std::vector<std::pair<int32_t, int>> v(freq.begin(), freq.end());
+            std::sort(v.begin(), v.end(), [](const auto& a, const auto& b)
+            {
+                if (a.second != b.second) return a.second > b.second;
+                return a.first < b.first;
+            });
+
+            log << " top_i32=";
+            for (size_t j = 0; j < v.size() && j < 5; ++j)
+            {
+                log << v[j].first << ":" << v[j].second;
+                if (j + 1 < v.size() && j + 1 < 5) log << "|";
+            }
+        };
+
+        emit_top_i32(i32_freq[off]);
+        log << "\n";
+    }
+
+    file_log("Phase 8F done run=" + std::to_string(run) + " rows=" + std::to_string(rows.size()));
+}
+
+static void start_phase8f_offset_value_matrix()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 8F offset value matrix started");
+
+    std::thread([]()
+    {
+        const int delays[] = {120, 300};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase8f_offset_value_matrix_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 8F offset value matrix finished");
+    }).detach();
+}
+// END PHASE8F_OFFSET_VALUE_MATRIX
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -5391,17 +5692,18 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.15.0");
+        ModVersion = STR("1.16.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.15.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.15.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.16.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.16.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
-        start_phase8e_timed_layout_memory_probes();
+        // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
+        start_phase8f_offset_value_matrix();
     }
 
     auto on_update() -> void override
