@@ -4317,32 +4317,44 @@ static void phase8c_dump_tiny_window(std::ofstream& rawlog, const char* label, U
 
 static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger, int scan_attempt)
 {
-    static bool done = false;
-    if (done || !trigger) return;
+    static int phase8c_runs = 0;
+    if (!trigger) return;
 
     std::string trigger_path = obj_path(trigger);
     if (trigger_path.find("RT_MapCapture") == std::string::npos) return;
 
-    if (scan_attempt < 14) return;
+    bool scheduled =
+        scan_attempt == 8 ||
+        scan_attempt == 12 ||
+        scan_attempt == 18 ||
+        scan_attempt == 24 ||
+        scan_attempt == 30;
 
-    done = true;
+    if (!scheduled) return;
+    if (phase8c_runs >= 5) return;
+
+    phase8c_runs++;
 
     auto out = out_dir();
 
-    std::ofstream log(out / "phase8c_component_layout_and_tiny_raw_probes.txt", std::ios::out);
-    std::ofstream csv(out / "phase8c_component_layout_candidates.csv", std::ios::out);
-    std::ofstream rawlog(out / "phase8c_tiny_raw_probe_windows.txt", std::ios::out);
+    std::ofstream log(out / "phase8c_component_layout_and_tiny_raw_probes.txt", std::ios::app);
+    std::ofstream csv(out / "phase8c_component_layout_candidates.csv", std::ios::app);
+    std::ofstream rawlog(out / "phase8c_tiny_raw_probe_windows.txt", std::ios::app);
 
-    file_log("Phase 8C component layout and tiny raw probes entered");
+    file_log("Phase 8C2 ENTERED attempt=" + std::to_string(scan_attempt) + " run=" + std::to_string(phase8c_runs));
 
-    log << "Phase 8C component layout + tiny raw probes\n";
+    log << "\n===== PHASE 8C2 RUN " << phase8c_runs << " ATTEMPT " << scan_attempt << " =====\n";
+    log << "Phase 8C2 component layout + tiny raw probes\n";
     log << "mode=targeted_runtime_landscape_metadata_and_small_memory_windows\n";
     log << "goal=find_sectionbase_component_size_candidate_offsets_and_initial_height_raw_signal\n";
     log << "safety=max_8_objects_small_windows_no_full_height_dump\n\n";
 
-    csv << "kind,class,name,path,addr,landscape_id,component_id,"
-           "candidate_sectionbase_count,candidate_size_count,candidate_ptr_count,"
-           "sample_i32_offsets,sample_size_offsets,sample_ptr_offsets\n";
+    if (phase8c_runs == 1)
+    {
+        csv << "run,attempt,kind,class,name,path,addr,landscape_id,component_id,"
+               "candidate_sectionbase_count,candidate_size_count,candidate_ptr_count,"
+               "sample_i32_offsets,sample_size_offsets,sample_ptr_offsets\n";
+    }
 
     struct Rec
     {
@@ -4539,7 +4551,9 @@ static void write_phase8c_component_layout_and_tiny_raw_probes(UObject* trigger,
             return out;
         };
 
-        csv << "\"" << r.kind << "\","
+        csv << phase8c_runs << ","
+            << scan_attempt << ","
+            << "\"" << r.kind << "\","
             << "\"" << r.cls << "\","
             << "\"" << r.name << "\","
             << "\"" << r.path << "\","
@@ -4676,15 +4690,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.13.0");
+        ModVersion = STR("1.13.1");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.13.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.13.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.13.1.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.13.1.2.2 on_unreal_init");
     }
 
     auto on_update() -> void override
