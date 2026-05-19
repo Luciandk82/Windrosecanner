@@ -9749,6 +9749,440 @@ static void start_phase9b_safe_readback_probe()
 
 
 
+
+
+// BEGIN PHASE9C_ARRAY_BRIDGE_PROBE
+
+struct Phase9CLinearColor
+{
+    float R;
+    float G;
+    float B;
+    float A;
+};
+
+static int32_t phase9c_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static float phase9c_f32(uint8_t* base, size_t off)
+{
+    float v = 0.f;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase9c_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase9c_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xffffffffffffffffULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static bool phase9c_valid_color(float v)
+{
+    return std::isfinite(v) && std::abs(v) < 1000000.0f;
+}
+
+static std::string phase9c_label(const std::string& path)
+{
+    if (path.find("RT_LandscapeHeights") != std::string::npos) return "RT_LandscapeHeights";
+    if (path.find("RT_LandscapeTable") != std::string::npos) return "RT_LandscapeTable";
+    if (path.find("RT_Biomes") != std::string::npos) return "RT_Biomes";
+    if (path.find("RT_SubBiomes") != std::string::npos) return "RT_SubBiomes";
+    if (path.find("RT_BiomeDistanceFields") != std::string::npos) return "RT_BiomeDistanceFields";
+    if (path.find("RT_MapCapture") != std::string::npos) return "RT_MapCapture";
+    if (path.find("RT_MapFog") != std::string::npos) return "RT_MapFog";
+    return "";
+}
+
+static bool phase9c_is_array_target_path(const std::string& path)
+{
+    return !phase9c_label(path).empty() &&
+           path.find("/R5TerrainGeneratorAPI/Volumization/") != std::string::npos;
+}
+
+static UObject* phase9c_find_object_exact(const std::string& wanted_path)
+{
+    UObject* found = nullptr;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o || found) return RC::LoopAction::Continue;
+
+            if (obj_path(o) == wanted_path)
+            {
+                found = o;
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    return found;
+}
+
+static UObject* phase9c_find_function_exact(const std::string& path_suffix)
+{
+    UObject* found = nullptr;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o || found) return RC::LoopAction::Continue;
+
+            std::string cls = class_name(o);
+            std::string path = obj_path(o);
+
+            if (cls.find("Function") != std::string::npos &&
+                path.find(path_suffix) != std::string::npos)
+            {
+                found = o;
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    return found;
+}
+
+static void write_phase9c_array_bridge_probe_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9c_summary.txt", std::ios::app);
+    std::ofstream funcs_csv(out / "phase9c_function_resolution.csv", std::ios::app);
+    std::ofstream targets_csv(out / "phase9c_array_targets.csv", std::ios::app);
+    std::ofstream candidate_csv(out / "phase9c_bridge_candidate_objects.csv", std::ios::app);
+    std::ofstream baseline_csv(out / "phase9c_2d_readback_recheck.csv", std::ios::app);
+    std::ofstream notes(out / "phase9c_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        funcs_csv << "run,delay_seconds,function_label,found,path,class,addr\n";
+        targets_csv << "run,delay_seconds,label,path,class,addr,dim_candidate_1924,dim_candidate_1928,count_candidate_1964,format_candidate_1960,note\n";
+        candidate_csv << "run,delay_seconds,kind,name,path,class,addr,reason\n";
+        baseline_csv << "run,delay_seconds,target_label,target_path,method,u,v,called,success,r,g,b,a,note\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::vector<ObjInfo> array_targets;
+    std::vector<ObjInfo> two_d_targets;
+    std::vector<ObjInfo> bridge_candidates;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            if (phase9c_is_array_target_path(path) &&
+                cls.find("TextureRenderTarget2DArray") != std::string::npos)
+            {
+                ObjInfo t{};
+                t.obj = o;
+                t.cls = cls;
+                t.name = name;
+                t.path = path;
+                array_targets.push_back(t);
+            }
+
+            if ((path.find("RT_MapCapture.RT_MapCapture") != std::string::npos ||
+                 path.find("RT_MapFog.RT_MapFog") != std::string::npos) &&
+                cls.find("TextureRenderTarget2D") != std::string::npos &&
+                cls.find("Array") == std::string::npos)
+            {
+                ObjInfo t{};
+                t.obj = o;
+                t.cls = cls;
+                t.name = name;
+                t.path = path;
+                two_d_targets.push_back(t);
+            }
+
+            bool maybe_material =
+                cls.find("Material") != std::string::npos ||
+                cls.find("MaterialInstance") != std::string::npos ||
+                name.find("Landscape") != std::string::npos ||
+                name.find("Map") != std::string::npos ||
+                name.find("Volum") != std::string::npos ||
+                path.find("Volumization") != std::string::npos ||
+                path.find("FullscreenMap") != std::string::npos ||
+                path.find("M_") != std::string::npos ||
+                path.find("MF_") != std::string::npos;
+
+            if (maybe_material &&
+                (path.find("Landscape") != std::string::npos ||
+                 path.find("Volumization") != std::string::npos ||
+                 path.find("FullscreenMap") != std::string::npos ||
+                 path.find("Map") != std::string::npos))
+            {
+                ObjInfo c{};
+                c.obj = o;
+                c.cls = cls;
+                c.name = name;
+                c.path = path;
+                bridge_candidates.push_back(c);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(array_targets.begin(), array_targets.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        return phase9c_label(a.path) < phase9c_label(b.path);
+    });
+
+    std::sort(bridge_candidates.begin(), bridge_candidates.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        return a.path < b.path;
+    });
+
+    UObject* kismet_cdo = phase9c_find_object_exact("/Script/Engine.Default__KismetRenderingLibrary");
+    UObject* read_raw_uv = phase9c_find_function_exact("/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawUV");
+    UObject* draw_material = phase9c_find_function_exact("/Script/Engine.KismetRenderingLibrary:DrawMaterialToRenderTarget");
+    UObject* create_rt2d = phase9c_find_function_exact("/Script/Engine.KismetRenderingLibrary:CreateRenderTarget2D");
+    UObject* create_rt2d_array = phase9c_find_function_exact("/Script/Engine.KismetRenderingLibrary:CreateRenderTarget2DArray");
+    UObject* export_rt = phase9c_find_function_exact("/Script/Engine.KismetRenderingLibrary:ExportRenderTarget");
+
+    auto write_func = [&](const std::string& label, UObject* fn)
+    {
+        funcs_csv << run << ","
+                  << delay_seconds << ","
+                  << "\"" << label << "\","
+                  << (fn ? "1" : "0") << ","
+                  << "\"" << (fn ? obj_path(fn) : std::string("")) << "\","
+                  << "\"" << (fn ? class_name(fn) : std::string("")) << "\","
+                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(fn) << std::dec << "\"\n";
+    };
+
+    write_func("Default__KismetRenderingLibrary", kismet_cdo);
+    write_func("ReadRenderTargetRawUV", read_raw_uv);
+    write_func("DrawMaterialToRenderTarget", draw_material);
+    write_func("CreateRenderTarget2D", create_rt2d);
+    write_func("CreateRenderTarget2DArray", create_rt2d_array);
+    write_func("ExportRenderTarget", export_rt);
+
+    for (const auto& t : array_targets)
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(t.obj);
+
+        int dim1924 = phase9c_i32(base, 1924);
+        int dim1928 = phase9c_i32(base, 1928);
+        int count1964 = phase9c_i32(base, 1964);
+        int fmt1960 = phase9c_i32(base, 1960);
+
+        targets_csv << run << ","
+                    << delay_seconds << ","
+                    << "\"" << phase9c_label(t.path) << "\","
+                    << "\"" << t.path << "\","
+                    << "\"" << t.cls << "\","
+                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(t.obj) << std::dec << "\","
+                    << dim1924 << ","
+                    << dim1928 << ","
+                    << count1964 << ","
+                    << fmt1960 << ","
+                    << "\"metadata_only_no_array_readback_yet\"\n";
+    }
+
+    int cand_logged = 0;
+    for (const auto& c : bridge_candidates)
+    {
+        if (cand_logged >= 250) break;
+
+        std::string reason = "bridge_candidate";
+        if (c.cls.find("Material") != std::string::npos) reason = "material_or_material_instance";
+        if (c.path.find("Volumization") != std::string::npos) reason = "volumization_asset";
+        if (c.path.find("FullscreenMap") != std::string::npos) reason = "fullscreen_map_asset";
+
+        candidate_csv << run << ","
+                      << delay_seconds << ","
+                      << "\"candidate\","
+                      << "\"" << c.name << "\","
+                      << "\"" << c.path << "\","
+                      << "\"" << c.cls << "\","
+                      << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << std::dec << "\","
+                      << "\"" << reason << "\"\n";
+        cand_logged++;
+    }
+
+    int read_calls = 0;
+    int read_success = 0;
+
+    if (kismet_cdo && read_raw_uv)
+    {
+        const float uvs[][2] = {
+            {0.1f, 0.1f},
+            {0.5f, 0.5f},
+            {0.9f, 0.9f}
+        };
+
+        for (const auto& t : two_d_targets)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                struct Params
+                {
+                    UObject* WorldContextObject;
+                    UObject* TextureRenderTarget;
+                    float U;
+                    float V;
+                    Phase9CLinearColor ReturnValue;
+                };
+
+                Params params{};
+                params.WorldContextObject = kismet_cdo;
+                params.TextureRenderTarget = t.obj;
+                params.U = uvs[i][0];
+                params.V = uvs[i][1];
+                params.ReturnValue = {0, 0, 0, 0};
+
+                bool called = false;
+                bool success = false;
+                std::string note = "not_called";
+
+                try
+                {
+                    kismet_cdo->ProcessEvent(reinterpret_cast<UFunction*>(read_raw_uv), &params);
+                    called = true;
+                    read_calls++;
+
+                    success =
+                        phase9c_valid_color(params.ReturnValue.R) &&
+                        phase9c_valid_color(params.ReturnValue.G) &&
+                        phase9c_valid_color(params.ReturnValue.B) &&
+                        phase9c_valid_color(params.ReturnValue.A);
+
+                    if (success) read_success++;
+                    note = success ? "ok" : "invalid_color";
+                }
+                catch (...)
+                {
+                    called = false;
+                    success = false;
+                    note = "exception";
+                }
+
+                baseline_csv << run << ","
+                             << delay_seconds << ","
+                             << "\"" << phase9c_label(t.path) << "\","
+                             << "\"" << t.path << "\","
+                             << "\"ReadRenderTargetRawUV\","
+                             << params.U << ","
+                             << params.V << ","
+                             << (called ? "1" : "0") << ","
+                             << (success ? "1" : "0") << ","
+                             << params.ReturnValue.R << ","
+                             << params.ReturnValue.G << ","
+                             << params.ReturnValue.B << ","
+                             << params.ReturnValue.A << ","
+                             << "\"" << note << "\"\n";
+            }
+        }
+    }
+
+    notes << "\n===== PHASE 9C NOTES RUN " << run << " =====\n";
+    notes << "9C does not yet perform TextureRenderTarget2DArray readback.\n";
+    notes << "It confirms bridge functions and discovers candidate materials/assets for array-slice-to-2D rendering route.\n";
+    notes << "Next likely step: use a known material/function chain or create a dynamic material if parameter binding route is available.\n";
+    notes << "Alternative: native RHI/C++ readback from TextureRenderTarget2DArray resource if exposed safely.\n";
+
+    summary << "\n===== PHASE 9C RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "kismet_cdo_found=" << (kismet_cdo ? "1" : "0") << "\n";
+    summary << "read_raw_uv_found=" << (read_raw_uv ? "1" : "0") << "\n";
+    summary << "draw_material_found=" << (draw_material ? "1" : "0") << "\n";
+    summary << "create_rt2d_found=" << (create_rt2d ? "1" : "0") << "\n";
+    summary << "create_rt2d_array_found=" << (create_rt2d_array ? "1" : "0") << "\n";
+    summary << "export_rt_found=" << (export_rt ? "1" : "0") << "\n";
+    summary << "array_targets=" << array_targets.size() << "\n";
+    summary << "two_d_targets=" << two_d_targets.size() << "\n";
+    summary << "bridge_candidates_logged=" << cand_logged << "\n";
+    summary << "baseline_read_calls=" << read_calls << "\n";
+    summary << "baseline_read_success=" << read_success << "\n";
+
+    if (draw_material && create_rt2d && read_raw_uv)
+    {
+        summary << "DECISION=material_to_2d_bridge_functions_available\n";
+    }
+    else
+    {
+        summary << "DECISION=material_to_2d_bridge_missing_functions\n";
+    }
+
+    file_log("Phase 9C done run=" + std::to_string(run) +
+             " arrays=" + std::to_string(array_targets.size()) +
+             " candidates=" + std::to_string(cand_logged) +
+             " draw=" + std::to_string(draw_material ? 1 : 0) +
+             " create2d=" + std::to_string(create_rt2d ? 1 : 0));
+}
+
+static void start_phase9c_array_bridge_probe()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9C array bridge probe started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase9c_array_bridge_probe_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9C array bridge probe finished");
+    }).detach();
+}
+
+// END PHASE9C_ARRAY_BRIDGE_PROBE
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -9835,15 +10269,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.25.0");
+        ModVersion = STR("1.26.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.25.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.25.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.26.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.26.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -9856,7 +10290,8 @@ public:
         // disabled v1.23.0: start_phase8l_worldmap_export();
         // disabled v1.24.0: start_phase8m_component_location_validation();
         // disabled v1.25.0: start_phase9a_rt_array_probe();
-        start_phase9b_safe_readback_probe();
+        // disabled v1.26.0: start_phase9b_safe_readback_probe();
+        start_phase9c_array_bridge_probe();
     }
 
     auto on_update() -> void override
