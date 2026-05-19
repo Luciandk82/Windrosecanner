@@ -10183,6 +10183,332 @@ static void start_phase9c_array_bridge_probe()
 
 
 
+
+
+// BEGIN PHASE9D_MATERIAL_PARAMETER_DISCOVERY
+
+static bool phase9d_contains_any(const std::string& text, const std::vector<std::string>& needles)
+{
+    for (const auto& n : needles)
+    {
+        if (text.find(n) != std::string::npos) return true;
+    }
+    return false;
+}
+
+static std::string phase9d_label(const std::string& path)
+{
+    if (path.find("RT_LandscapeHeights") != std::string::npos) return "RT_LandscapeHeights";
+    if (path.find("RT_LandscapeTable") != std::string::npos) return "RT_LandscapeTable";
+    if (path.find("RT_Biomes") != std::string::npos) return "RT_Biomes";
+    if (path.find("RT_SubBiomes") != std::string::npos) return "RT_SubBiomes";
+    if (path.find("RT_BiomeDistanceFields") != std::string::npos) return "RT_BiomeDistanceFields";
+    return "";
+}
+
+static void write_phase9d_material_parameter_discovery_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9d_summary.txt", std::ios::app);
+    std::ofstream funcs_csv(out / "phase9d_material_parameter_functions.csv", std::ios::app);
+    std::ofstream mats_csv(out / "phase9d_material_candidates.csv", std::ios::app);
+    std::ofstream arrays_csv(out / "phase9d_array_targets.csv", std::ios::app);
+    std::ofstream notes(out / "phase9d_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        funcs_csv << "run,delay_seconds,category,name,path,class,addr\n";
+        mats_csv << "run,delay_seconds,name,path,class,addr,reason\n";
+        arrays_csv << "run,delay_seconds,label,name,path,class,addr\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::vector<ObjInfo> functions;
+    std::vector<ObjInfo> materials;
+    std::vector<ObjInfo> arrays;
+
+    int scanned = 0;
+
+    std::vector<std::string> function_needles = {
+        "CreateDynamicMaterialInstance",
+        "CreateMID",
+        "SetTextureParameter",
+        "SetTextureParameterValue",
+        "SetScalarParameter",
+        "SetScalarParameterValue",
+        "SetVectorParameter",
+        "SetVectorParameterValue",
+        "SetMaterial",
+        "GetMaterial",
+        "DrawMaterialToRenderTarget",
+        "CreateRenderTarget2D",
+        "ReadRenderTargetRawUV",
+        "SetParameter",
+        "TextureParameter",
+        "ScalarParameter",
+        "DynamicMaterial",
+        "MaterialInstanceDynamic",
+        "Texture2DArray",
+        "RenderTarget2DArray",
+        "LandscapeTable",
+        "LandscapeHeights"
+    };
+
+    std::vector<std::string> material_needles = {
+        "/R5TerrainGeneratorAPI/Volumization",
+        "Volumization",
+        "Landscape",
+        "WorldToLandscape",
+        "Biome",
+        "Height",
+        "Map",
+        "FullscreenMap",
+        "RT_Landscape",
+        "M_",
+        "MI_",
+        "MF_"
+    };
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            if (cls.find("Function") != std::string::npos &&
+                (phase9d_contains_any(name, function_needles) || phase9d_contains_any(path, function_needles)))
+            {
+                ObjInfo f{};
+                f.obj = o;
+                f.cls = cls;
+                f.name = name;
+                f.path = path;
+                functions.push_back(f);
+            }
+
+            bool materialish =
+                cls.find("Material") != std::string::npos ||
+                cls.find("MaterialInstance") != std::string::npos ||
+                cls.find("MaterialFunction") != std::string::npos;
+
+            if (materialish && phase9d_contains_any(path, material_needles))
+            {
+                ObjInfo m{};
+                m.obj = o;
+                m.cls = cls;
+                m.name = name;
+                m.path = path;
+                materials.push_back(m);
+            }
+
+            if (!phase9d_label(path).empty() && cls.find("TextureRenderTarget2DArray") != std::string::npos)
+            {
+                ObjInfo a{};
+                a.obj = o;
+                a.cls = cls;
+                a.name = name;
+                a.path = path;
+                arrays.push_back(a);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(functions.begin(), functions.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        return a.path < b.path;
+    });
+
+    std::sort(materials.begin(), materials.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        return a.path < b.path;
+    });
+
+    std::sort(arrays.begin(), arrays.end(), [](const ObjInfo& a, const ObjInfo& b)
+    {
+        return phase9d_label(a.path) < phase9d_label(b.path);
+    });
+
+    int texture_param_funcs = 0;
+    int scalar_param_funcs = 0;
+    int dynamic_material_funcs = 0;
+    int draw_funcs = 0;
+    int create_rt_funcs = 0;
+    int read_funcs = 0;
+    int array_related_funcs = 0;
+
+    for (const auto& f : functions)
+    {
+        std::string cat = "other";
+
+        if (f.name.find("TextureParameter") != std::string::npos || f.path.find("TextureParameter") != std::string::npos)
+        {
+            cat = "texture_parameter";
+            texture_param_funcs++;
+        }
+        else if (f.name.find("ScalarParameter") != std::string::npos || f.path.find("ScalarParameter") != std::string::npos)
+        {
+            cat = "scalar_parameter";
+            scalar_param_funcs++;
+        }
+        else if (f.name.find("DynamicMaterial") != std::string::npos || f.name.find("CreateMID") != std::string::npos ||
+                 f.path.find("DynamicMaterial") != std::string::npos || f.path.find("MaterialInstanceDynamic") != std::string::npos)
+        {
+            cat = "dynamic_material";
+            dynamic_material_funcs++;
+        }
+        else if (f.name.find("DrawMaterialToRenderTarget") != std::string::npos)
+        {
+            cat = "draw_material_to_rt";
+            draw_funcs++;
+        }
+        else if (f.name.find("CreateRenderTarget2D") != std::string::npos)
+        {
+            cat = "create_rt";
+            create_rt_funcs++;
+        }
+        else if (f.name.find("ReadRenderTarget") != std::string::npos)
+        {
+            cat = "read_rt";
+            read_funcs++;
+        }
+        else if (f.name.find("Texture2DArray") != std::string::npos || f.name.find("RenderTarget2DArray") != std::string::npos ||
+                 f.path.find("Texture2DArray") != std::string::npos || f.path.find("RenderTarget2DArray") != std::string::npos)
+        {
+            cat = "array_related";
+            array_related_funcs++;
+        }
+
+        funcs_csv << run << ","
+                  << delay_seconds << ","
+                  << "\"" << cat << "\","
+                  << "\"" << f.name << "\","
+                  << "\"" << f.path << "\","
+                  << "\"" << f.cls << "\","
+                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(f.obj) << std::dec << "\"\n";
+    }
+
+    int mat_logged = 0;
+
+    for (const auto& m : materials)
+    {
+        std::string reason = "material_candidate";
+        if (m.path.find("Volumization") != std::string::npos) reason = "volumization";
+        if (m.path.find("WorldToLandscape") != std::string::npos) reason = "world_to_landscape";
+        if (m.path.find("FullscreenMap") != std::string::npos) reason = "fullscreen_map";
+        if (m.path.find("Biome") != std::string::npos) reason = "biome";
+        if (m.path.find("Height") != std::string::npos) reason = "height";
+
+        mats_csv << run << ","
+                 << delay_seconds << ","
+                 << "\"" << m.name << "\","
+                 << "\"" << m.path << "\","
+                 << "\"" << m.cls << "\","
+                 << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(m.obj) << std::dec << "\","
+                 << "\"" << reason << "\"\n";
+
+        mat_logged++;
+    }
+
+    for (const auto& a : arrays)
+    {
+        arrays_csv << run << ","
+                   << delay_seconds << ","
+                   << "\"" << phase9d_label(a.path) << "\","
+                   << "\"" << a.name << "\","
+                   << "\"" << a.path << "\","
+                   << "\"" << a.cls << "\","
+                   << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(a.obj) << std::dec << "\"\n";
+    }
+
+    notes << "\n===== PHASE 9D NOTES RUN " << run << " =====\n";
+    notes << "9D is discovery-only. No ProcessEvent, no GPU API, no readback from TextureRenderTarget2DArray.\n";
+    notes << "Goal: identify exact UFunctions for dynamic material creation, texture parameter binding, scalar slice index binding, and draw-to-render-target bridge.\n";
+    notes << "Next phase can attempt a minimal material instance route only if exact parameter setter functions are found.\n";
+
+    summary << "\n===== PHASE 9D RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "functions_logged=" << functions.size() << "\n";
+    summary << "texture_parameter_functions=" << texture_param_funcs << "\n";
+    summary << "scalar_parameter_functions=" << scalar_param_funcs << "\n";
+    summary << "dynamic_material_functions=" << dynamic_material_funcs << "\n";
+    summary << "draw_material_functions=" << draw_funcs << "\n";
+    summary << "create_rt_functions=" << create_rt_funcs << "\n";
+    summary << "read_rt_functions=" << read_funcs << "\n";
+    summary << "array_related_functions=" << array_related_funcs << "\n";
+    summary << "material_candidates=" << mat_logged << "\n";
+    summary << "array_targets=" << arrays.size() << "\n";
+
+    if (texture_param_funcs > 0 && scalar_param_funcs > 0 && dynamic_material_funcs > 0 && draw_funcs > 0)
+    {
+        summary << "DECISION=dynamic_material_parameter_route_available\n";
+    }
+    else if (texture_param_funcs > 0 && scalar_param_funcs > 0 && draw_funcs > 0)
+    {
+        summary << "DECISION=material_parameter_route_partially_available\n";
+    }
+    else
+    {
+        summary << "DECISION=material_parameter_route_incomplete\n";
+    }
+
+    file_log("Phase 9D done run=" + std::to_string(run) +
+             " funcs=" + std::to_string(functions.size()) +
+             " texparam=" + std::to_string(texture_param_funcs) +
+             " scalar=" + std::to_string(scalar_param_funcs) +
+             " dynmat=" + std::to_string(dynamic_material_funcs) +
+             " mats=" + std::to_string(mat_logged));
+}
+
+static void start_phase9d_material_parameter_discovery()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9D material parameter discovery started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+            {
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+            }
+
+            write_phase9d_material_parameter_discovery_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9D material parameter discovery finished");
+    }).detach();
+}
+
+// END PHASE9D_MATERIAL_PARAMETER_DISCOVERY
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -10269,15 +10595,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.26.0");
+        ModVersion = STR("1.27.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.26.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.26.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.27.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.27.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -10291,7 +10617,8 @@ public:
         // disabled v1.24.0: start_phase8m_component_location_validation();
         // disabled v1.25.0: start_phase9a_rt_array_probe();
         // disabled v1.26.0: start_phase9b_safe_readback_probe();
-        start_phase9c_array_bridge_probe();
+        // disabled v1.27.0: start_phase9c_array_bridge_probe();
+        start_phase9d_material_parameter_discovery();
     }
 
     auto on_update() -> void override
