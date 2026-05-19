@@ -11905,6 +11905,503 @@ static void start_phase9h_landscape_table_deep_array_dump()
 
 
 
+
+
+// BEGIN PHASE9I_RANGE_RECORD_HUNT
+
+static uint32_t phase9i_u32(uint8_t* base, size_t off)
+{
+    uint32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static int32_t phase9i_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uint16_t phase9i_u16(uint8_t* base, size_t off)
+{
+    uint16_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static float phase9i_f32(uint8_t* base, size_t off)
+{
+    float v = 0.0f;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static double phase9i_f64(uint8_t* base, size_t off)
+{
+    double v = 0.0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase9i_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase9i_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xffffffffffffffffULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static bool phase9i_probably_subsystem(const std::string& name, const std::string& path, const std::string& cls)
+{
+    return name.find("VolumizationSubsystem") != std::string::npos ||
+           path.find("VolumizationSubsystem") != std::string::npos ||
+           cls.find("VolumizationSubsystem") != std::string::npos;
+}
+
+static void phase9i_hex_bytes(std::ofstream& os, uint8_t* base, size_t len)
+{
+    static const char* hexdigits = "0123456789abcdef";
+    for (size_t i = 0; i < len; ++i)
+    {
+        unsigned char b = base[i];
+        os << hexdigits[(b >> 4) & 0xf] << hexdigits[b & 0xf];
+    }
+}
+
+static int phase9i_score_candidate(uint8_t* base)
+{
+    uint32_t entry_count = phase9i_u32(base, 0x150);
+    uint32_t table_w = phase9i_u32(base, 0x154);
+    uint32_t table_h = phase9i_u32(base, 0x158);
+    uintptr_t entry_base = phase9i_ptr(base, 0x168);
+    uintptr_t offset_array = phase9i_ptr(base, 0x178);
+    uintptr_t value_array = phase9i_ptr(base, 0x188);
+    uintptr_t prefix_array = phase9i_ptr(base, 0x198);
+
+    int score = 0;
+    if (entry_count > 0 && entry_count < 100000) score += 4;
+    if (table_w > 100 && table_w < 100000) score += 3;
+    if (table_h > 100 && table_h < 100000) score += 3;
+    if (phase9i_probably_ptr(entry_base)) score += 4;
+    if (phase9i_probably_ptr(offset_array)) score += 3;
+    if (phase9i_probably_ptr(value_array)) score += 3;
+    if (phase9i_probably_ptr(prefix_array)) score += 3;
+    return score;
+}
+
+static void write_phase9i_range_record_hunt_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9i_summary.txt", std::ios::app);
+    std::ofstream candidates(out / "phase9i_candidates.csv", std::ios::app);
+    std::ofstream entrymap(out / "phase9i_entry_range_map.csv", std::ios::app);
+    std::ofstream ranges(out / "phase9i_possible_range_records.csv", std::ios::app);
+    std::ofstream scans(out / "phase9i_stride_scan_candidates.csv", std::ios::app);
+    std::ofstream raw(out / "phase9i_range_raw_windows.csv", std::ios::app);
+    std::ofstream notes(out / "phase9i_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        candidates << "run,delay_seconds,name,path,class,addr,score,entry_count,table_width,table_height,entry_base,offset_array,value_array,prefix_array,prefix_sum\n";
+        entrymap << "run,delay_seconds,subsystem_addr,index,range_start,range_count,range_end,center_x,center_y,grid_size,offset_x,offset_y,value_class\n";
+        ranges << "run,delay_seconds,subsystem_addr,source,label,record_index,record_addr,stride,w0,w1,w2,w3,w4,w5,w6,w7,i0,i1,i2,i3,i4,i5,i6,i7,f0,f1,f2,f3\n";
+        scans << "run,delay_seconds,subsystem_addr,source,label,base_addr,stride,records_tested,score,reason\n";
+        raw << "run,delay_seconds,subsystem_addr,source,label,base_addr,byte_offset,window_hex\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+        int score = 0;
+    };
+
+    std::vector<ObjInfo> candidates_vec;
+    int scanned_objects = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned_objects++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            if (phase9i_probably_subsystem(name, path, cls))
+            {
+                uint8_t* base = reinterpret_cast<uint8_t*>(o);
+                int score = phase9i_score_candidate(base);
+                ObjInfo x{o, cls, name, path, score};
+                candidates_vec.push_back(x);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(candidates_vec.begin(), candidates_vec.end(), [](const ObjInfo& a, const ObjInfo& b){ return a.score > b.score; });
+
+    int valid = 0;
+    int range_rows = 0;
+    int scan_rows = 0;
+    int raw_rows = 0;
+    int entry_rows = 0;
+    int best_score = candidates_vec.empty() ? 0 : candidates_vec.front().score;
+    uintptr_t best_addr = candidates_vec.empty() ? 0 : reinterpret_cast<uintptr_t>(candidates_vec.front().obj);
+
+    for (const auto& c : candidates_vec)
+    {
+        uint8_t* base = reinterpret_cast<uint8_t*>(c.obj);
+
+        uint32_t entry_count = phase9i_u32(base, 0x150);
+        uint32_t table_w = phase9i_u32(base, 0x154);
+        uint32_t table_h = phase9i_u32(base, 0x158);
+        uintptr_t entry_base = phase9i_ptr(base, 0x168);
+        uintptr_t offset_array = phase9i_ptr(base, 0x178);
+        uintptr_t value_array = phase9i_ptr(base, 0x188);
+        uintptr_t prefix_array = phase9i_ptr(base, 0x198);
+
+        uint32_t prefix_sum = 0;
+        if (phase9i_probably_ptr(prefix_array) && entry_count > 0 && entry_count < 100000)
+        {
+            for (uint32_t i = 0; i < entry_count; ++i)
+            {
+                int32_t v = 0;
+                std::memcpy(&v, reinterpret_cast<void*>(prefix_array + static_cast<uintptr_t>(i) * 4ULL), sizeof(v));
+                if (v > 0 && v < 1000000) prefix_sum += static_cast<uint32_t>(v);
+            }
+        }
+
+        candidates << run << ","
+                   << delay_seconds << ","
+                   << "\"" << c.name << "\","
+                   << "\"" << c.path << "\","
+                   << "\"" << c.cls << "\","
+                   << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << std::dec << "\","
+                   << c.score << ","
+                   << entry_count << ","
+                   << table_w << ","
+                   << table_h << ","
+                   << "\"0x" << std::hex << entry_base << "\","
+                   << "\"0x" << offset_array << "\","
+                   << "\"0x" << value_array << "\","
+                   << "\"0x" << prefix_array << "\","
+                   << std::dec << prefix_sum << "\n";
+
+        if (c.score < 18) continue;
+        if (entry_count == 0 || entry_count > 100000) continue;
+        if (!phase9i_probably_ptr(entry_base)) continue;
+        valid++;
+
+        std::vector<uint32_t> starts;
+        std::vector<uint32_t> counts;
+
+        uint32_t accum = 0;
+        for (uint32_t idx = 0; idx < entry_count; ++idx)
+        {
+            int32_t count = 0;
+            if (phase9i_probably_ptr(prefix_array))
+                std::memcpy(&count, reinterpret_cast<void*>(prefix_array + static_cast<uintptr_t>(idx) * 4ULL), sizeof(count));
+
+            if (count < 0) count = 0;
+            if (count > 1024) count = 1024;
+
+            starts.push_back(accum);
+            counts.push_back(static_cast<uint32_t>(count));
+
+            uintptr_t eaddr = entry_base + static_cast<uintptr_t>(idx) * 0x60ULL;
+            uint8_t* eb = reinterpret_cast<uint8_t*>(eaddr);
+
+            double cx = phase9i_f64(eb, 0x20);
+            double cy = phase9i_f64(eb, 0x28);
+            double gs = phase9i_f64(eb, 0x40);
+
+            int32_t ox = 0;
+            int32_t oy = 0;
+            if (phase9i_probably_ptr(offset_array))
+            {
+                uint64_t packed = 0;
+                std::memcpy(&packed, reinterpret_cast<void*>(offset_array + static_cast<uintptr_t>(idx) * 8ULL), sizeof(packed));
+                ox = static_cast<int32_t>(packed & 0xffffffffULL);
+                oy = static_cast<int32_t>((packed >> 32) & 0xffffffffULL);
+            }
+
+            int32_t val = 0;
+            if (phase9i_probably_ptr(value_array))
+                std::memcpy(&val, reinterpret_cast<void*>(value_array + static_cast<uintptr_t>(idx) * 4ULL), sizeof(val));
+
+            entrymap << run << ","
+                     << delay_seconds << ","
+                     << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << std::dec << "\","
+                     << idx << ","
+                     << starts.back() << ","
+                     << counts.back() << ","
+                     << (starts.back() + counts.back()) << ","
+                     << cx << ","
+                     << cy << ","
+                     << gs << ","
+                     << ox << ","
+                     << oy << ","
+                     << val << "\n";
+
+            accum += counts.back();
+            entry_rows++;
+        }
+
+        struct Source
+        {
+            const char* source;
+            const char* label;
+            uintptr_t base_addr;
+            size_t max_bytes;
+        };
+
+        std::vector<Source> sources;
+
+        if (phase9i_probably_ptr(entry_base))
+        {
+            sources.push_back({"entry_array_plus_0x20", "entry_core_doubles", entry_base + 0x20, static_cast<size_t>(entry_count) * 0x60ULL});
+            sources.push_back({"entry_array_plus_0x40", "entry_core_grid", entry_base + 0x40, static_cast<size_t>(entry_count) * 0x60ULL});
+            sources.push_back({"entry_array_after_entries", "after_entry_array", entry_base + static_cast<uintptr_t>(entry_count) * 0x60ULL, 0x4000});
+            if (entry_base > 0x4000)
+                sources.push_back({"entry_array_before_entries", "before_entry_array", entry_base - 0x4000, 0x4000});
+        }
+
+        if (phase9i_probably_ptr(offset_array))
+        {
+            sources.push_back({"offset_array", "offset_int2_array", offset_array, static_cast<size_t>(entry_count) * 8ULL});
+            sources.push_back({"offset_array_after", "after_offset_array", offset_array + static_cast<uintptr_t>(entry_count) * 8ULL, 0x4000});
+            if (offset_array > 0x4000)
+                sources.push_back({"offset_array_before", "before_offset_array", offset_array - 0x4000, 0x4000});
+        }
+
+        if (phase9i_probably_ptr(value_array))
+        {
+            sources.push_back({"value_array", "value_class_array", value_array, static_cast<size_t>(entry_count) * 4ULL});
+            sources.push_back({"value_array_after", "after_value_array", value_array + static_cast<uintptr_t>(entry_count) * 4ULL, 0x4000});
+            if (value_array > 0x4000)
+                sources.push_back({"value_array_before", "before_value_array", value_array - 0x4000, 0x4000});
+        }
+
+        if (phase9i_probably_ptr(prefix_array))
+        {
+            sources.push_back({"prefix_array", "prefix_count_array", prefix_array, static_cast<size_t>(entry_count) * 4ULL});
+            sources.push_back({"prefix_array_after", "after_prefix_array", prefix_array + static_cast<uintptr_t>(entry_count) * 4ULL, 0x8000});
+            if (prefix_array > 0x8000)
+                sources.push_back({"prefix_array_before", "before_prefix_array", prefix_array - 0x8000, 0x8000});
+        }
+
+        const int strides[] = {4, 8, 12, 16, 20, 24, 32, 40, 48, 64};
+
+        for (const auto& src : sources)
+        {
+            if (!phase9i_probably_ptr(src.base_addr)) continue;
+
+            for (int stride : strides)
+            {
+                if (src.max_bytes < static_cast<size_t>(stride)) continue;
+
+                uint32_t records = static_cast<uint32_t>(src.max_bytes / static_cast<size_t>(stride));
+                if (records > 512) records = 512;
+
+                int score = 0;
+                int small_count = 0;
+                int coord_like = 0;
+                int nonzero = 0;
+
+                for (uint32_t ri = 0; ri < records; ++ri)
+                {
+                    uint8_t* rb = reinterpret_cast<uint8_t*>(src.base_addr + static_cast<uintptr_t>(ri) * static_cast<uintptr_t>(stride));
+                    int32_t a = phase9i_i32(rb, 0);
+                    int32_t b = stride >= 8 ? phase9i_i32(rb, 4) : 0;
+                    int32_t c0 = stride >= 12 ? phase9i_i32(rb, 8) : 0;
+                    float fa = phase9i_f32(rb, 0);
+                    float fb = stride >= 8 ? phase9i_f32(rb, 4) : 0.0f;
+
+                    if (a != 0 || b != 0 || c0 != 0) nonzero++;
+                    if (a >= 0 && a <= 1261 && b >= 0 && b <= 1261) small_count++;
+                    if ((fa > -2000000.0f && fa < 2000000.0f && fb > -2000000.0f && fb < 2000000.0f) && (fa != 0.0f || fb != 0.0f)) coord_like++;
+                }
+
+                score = small_count * 3 + coord_like + nonzero;
+
+                std::string reason = "";
+                if (small_count > 10) reason += "many_table_coord_pairs;";
+                if (coord_like > 10) reason += "many_float_coord_pairs;";
+                if (nonzero > 10) reason += "many_nonzero_records;";
+
+                scans << run << ","
+                      << delay_seconds << ","
+                      << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << "\","
+                      << "\"" << src.source << "\","
+                      << "\"" << src.label << "\","
+                      << "\"0x" << src.base_addr << "\","
+                      << std::dec << stride << ","
+                      << records << ","
+                      << score << ","
+                      << "\"" << reason << "\"\n";
+
+                scan_rows++;
+
+                bool should_dump = false;
+                if (score > 40) should_dump = true;
+                if (std::string(src.source).find("after") != std::string::npos && score > 20) should_dump = true;
+                if (std::string(src.source) == "prefix_array_after") should_dump = true;
+                if (std::string(src.source) == "offset_array_after") should_dump = true;
+
+                if (!should_dump) continue;
+
+                uint32_t dump_records = records;
+                if (dump_records > 160) dump_records = 160;
+
+                for (uint32_t ri = 0; ri < dump_records; ++ri)
+                {
+                    uint8_t* rb = reinterpret_cast<uint8_t*>(src.base_addr + static_cast<uintptr_t>(ri) * static_cast<uintptr_t>(stride));
+
+                    uint32_t w[8] = {0,0,0,0,0,0,0,0};
+                    int32_t ii[8] = {0,0,0,0,0,0,0,0};
+                    float ff[4] = {0,0,0,0};
+
+                    for (int k = 0; k < 8; ++k)
+                    {
+                        if ((k + 1) * 4 <= stride)
+                        {
+                            w[k] = phase9i_u32(rb, k * 4);
+                            ii[k] = phase9i_i32(rb, k * 4);
+                        }
+                    }
+
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        if ((k + 1) * 4 <= stride)
+                            ff[k] = phase9i_f32(rb, k * 4);
+                    }
+
+                    ranges << run << ","
+                           << delay_seconds << ","
+                           << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << "\","
+                           << "\"" << src.source << "\","
+                           << "\"" << src.label << "\","
+                           << std::dec << ri << ","
+                           << "\"0x" << std::hex << (src.base_addr + static_cast<uintptr_t>(ri) * static_cast<uintptr_t>(stride)) << "\","
+                           << std::dec << stride;
+
+                    for (int k = 0; k < 8; ++k)
+                        ranges << ",\"0x" << std::hex << w[k] << "\"";
+
+                    ranges << std::dec;
+                    for (int k = 0; k < 8; ++k)
+                        ranges << "," << ii[k];
+
+                    for (int k = 0; k < 4; ++k)
+                        ranges << "," << ff[k];
+
+                    ranges << "\n";
+                    range_rows++;
+                }
+            }
+
+            size_t window_bytes = src.max_bytes;
+            if (window_bytes > 0x400) window_bytes = 0x400;
+            for (size_t bo = 0; bo < window_bytes; bo += 0x40)
+            {
+                raw << run << ","
+                    << delay_seconds << ","
+                    << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(c.obj) << "\","
+                    << "\"" << src.source << "\","
+                    << "\"" << src.label << "\","
+                    << "\"0x" << src.base_addr << "\","
+                    << std::dec << bo << ",\"";
+
+                phase9i_hex_bytes(raw, reinterpret_cast<uint8_t*>(src.base_addr + bo), 0x40);
+
+                raw << "\"\n";
+                raw_rows++;
+            }
+        }
+    }
+
+    notes << "\n===== PHASE 9I NOTES RUN " << run << " =====\n";
+    notes << "9I hunts for the next-level 133 range/slice records implied by Phase 9H prefix_sum.\n";
+    notes << "It dumps stride scans around entry_array/offset_array/value_array/prefix_array and before/after adjacent memory windows.\n";
+    notes << "Likely useful outputs: phase9i_entry_range_map.csv, phase9i_stride_scan_candidates.csv, phase9i_possible_range_records.csv, phase9i_range_raw_windows.csv.\n";
+    notes << "This phase is read-only. No ProcessEvent, no GPU readback, no texture modification.\n";
+
+    summary << "\n===== PHASE 9I RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned_objects << "\n";
+    summary << "subsystem_candidates=" << candidates_vec.size() << "\n";
+    summary << "valid_like_subsystems=" << valid << "\n";
+    summary << "best_score=" << best_score << "\n";
+    summary << "best_addr=0x" << std::hex << best_addr << std::dec << "\n";
+    summary << "entry_range_rows=" << entry_rows << "\n";
+    summary << "stride_scan_rows=" << scan_rows << "\n";
+    summary << "possible_range_record_rows=" << range_rows << "\n";
+    summary << "raw_window_rows=" << raw_rows << "\n";
+
+    if (valid > 0 && range_rows > 0)
+        summary << "DECISION=range_record_hunt_dumped_candidates\n";
+    else if (valid > 0)
+        summary << "DECISION=valid_subsystem_found_no_range_candidates\n";
+    else
+        summary << "DECISION=no_valid_volumization_subsystem_found\n";
+
+    file_log("Phase 9I done run=" + std::to_string(run) +
+             " valid=" + std::to_string(valid) +
+             " entry_rows=" + std::to_string(entry_rows) +
+             " scan_rows=" + std::to_string(scan_rows) +
+             " range_rows=" + std::to_string(range_rows));
+}
+
+static void start_phase9i_range_record_hunt()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9I range record hunt started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+
+            write_phase9i_range_record_hunt_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9I range record hunt finished");
+    }).detach();
+}
+
+// END PHASE9I_RANGE_RECORD_HUNT
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -11991,15 +12488,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.31.0");
+        ModVersion = STR("1.32.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.31.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.31.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.32.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.32.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -12017,7 +12514,8 @@ public:
         // disabled v1.28.0: start_phase9d_material_parameter_discovery();
         // disabled v1.29.0: start_phase9e_vol_material_param_probe();
         // disabled v1.30.0: start_phase9f_materialfunction_fname_scan();
-        // disabled v1.31.0: start_phase9g_landscape_table_runtime_dump();
+        // disabled v1.31.0: // disabled v1.32.0: start_phase9g_landscape_table_runtime_dump();
+        start_phase9i_range_record_hunt();
         start_phase9h_landscape_table_deep_array_dump();
     }
 
