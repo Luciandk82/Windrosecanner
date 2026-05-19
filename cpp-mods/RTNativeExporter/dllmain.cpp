@@ -10821,6 +10821,303 @@ static void start_phase9e_vol_material_param_probe()
 
 
 
+
+
+// BEGIN PHASE9F_MATERIALFUNCTION_FNAME_SCAN
+
+static int32_t phase9f_i32(uint8_t* base, size_t off)
+{
+    int32_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static uintptr_t phase9f_ptr(uint8_t* base, size_t off)
+{
+    uintptr_t v = 0;
+    std::memcpy(&v, base + off, sizeof(v));
+    return v;
+}
+
+static bool phase9f_probably_ptr(uintptr_t v)
+{
+    if (v < 0x10000ULL) return false;
+    if (v == 0xffffffffffffffffULL) return false;
+    if (v == 0xccccccccccccccccULL) return false;
+    if (v == 0xcdcdcdcdcdcdcdcdULL) return false;
+    if (v == 0xddddddddddddddddULL) return false;
+    if ((v & 0xffff000000000000ULL) == 0xffff000000000000ULL) return false;
+    return true;
+}
+
+static bool phase9f_is_target_mf(const std::string& name, const std::string& path)
+{
+    return path.find("/R5TerrainGeneratorAPI/Volumization/") != std::string::npos &&
+           (name == "MF_SampleLandscapeHeight" ||
+            name == "MF_SampleBiome" ||
+            name == "MF_SampleBiomeWeight" ||
+            name == "MF_SampleSubBiome" ||
+            name == "MF_SampleSubBiomeIndex" ||
+            name == "MF_WorldToLandscapeNormalized");
+}
+
+static bool phase9f_is_interesting_text(const std::string& text)
+{
+    std::vector<std::string> needles = {
+        "Landscape", "Height", "Table", "Biome", "SubBiome", "Distance",
+        "Field", "Slice", "Layer", "Index", "Island", "Texture",
+        "RT_", "World", "Normalized", "UV", "Coord", "Position",
+        "X", "Y", "Z", "Array"
+    };
+
+    for (const auto& n : needles)
+        if (text.find(n) != std::string::npos)
+            return true;
+
+    return false;
+}
+
+static void write_phase9f_materialfunction_fname_scan_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9f_summary.txt", std::ios::app);
+    std::ofstream targets(out / "phase9f_target_materialfunctions.csv", std::ios::app);
+    std::ofstream ptrs(out / "phase9f_object_pointer_refs.csv", std::ios::app);
+    std::ofstream ints(out / "phase9f_small_int_offsets.csv", std::ios::app);
+    std::ofstream names(out / "phase9f_name_like_object_refs.csv", std::ios::app);
+    std::ofstream notes(out / "phase9f_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        targets << "run,delay_seconds,name,path,class,addr\n";
+        ptrs << "run,delay_seconds,source_name,source_path,source_addr,offset,ptr,pointee_name,pointee_path,pointee_class,relevance\n";
+        ints << "run,delay_seconds,source_name,source_path,source_addr,offset,i32,interpretation\n";
+        names << "run,delay_seconds,source_name,source_path,source_addr,candidate_name,candidate_path,candidate_class,reason\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::map<uintptr_t, ObjInfo> objects_by_addr;
+    std::vector<ObjInfo> target_mfs;
+    std::vector<ObjInfo> interesting_objects;
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            ObjInfo info{o, cls, name, path};
+            objects_by_addr[reinterpret_cast<uintptr_t>(o)] = info;
+
+            if (phase9f_is_target_mf(name, path))
+                target_mfs.push_back(info);
+
+            if (phase9f_is_interesting_text(name) || phase9f_is_interesting_text(path))
+            {
+                if (cls.find("Material") != std::string::npos ||
+                    cls.find("MaterialExpression") != std::string::npos ||
+                    cls.find("Texture") != std::string::npos ||
+                    cls.find("Function") != std::string::npos ||
+                    path.find("/R5TerrainGeneratorAPI/Volumization/") != std::string::npos)
+                {
+                    interesting_objects.push_back(info);
+                }
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(target_mfs.begin(), target_mfs.end(), [](const ObjInfo& a, const ObjInfo& b){ return a.path < b.path; });
+    std::sort(interesting_objects.begin(), interesting_objects.end(), [](const ObjInfo& a, const ObjInfo& b){ return a.path < b.path; });
+
+    int ptr_rows = 0;
+    int int_rows = 0;
+    int name_rows = 0;
+
+    for (const auto& mf : target_mfs)
+    {
+        targets << run << ","
+                << delay_seconds << ","
+                << "\"" << mf.name << "\","
+                << "\"" << mf.path << "\","
+                << "\"" << mf.cls << "\","
+                << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(mf.obj) << std::dec << "\"\n";
+
+        uint8_t* base = reinterpret_cast<uint8_t*>(mf.obj);
+
+        for (size_t off = 0; off <= 0x1000; off += 8)
+        {
+            uintptr_t p = phase9f_ptr(base, off);
+            if (!phase9f_probably_ptr(p)) continue;
+
+            auto it = objects_by_addr.find(p);
+            if (it == objects_by_addr.end()) continue;
+
+            const ObjInfo& poi = it->second;
+
+            std::string relevance = "object_ref";
+            if (poi.cls.find("Texture") != std::string::npos) relevance = "texture_ref";
+            if (poi.cls.find("MaterialExpression") != std::string::npos) relevance = "material_expression_ref";
+            if (poi.cls.find("MaterialFunction") != std::string::npos) relevance = "material_function_ref";
+            if (phase9f_is_interesting_text(poi.name) || phase9f_is_interesting_text(poi.path)) relevance = "interesting_name_ref";
+            if (poi.path.find("/R5TerrainGeneratorAPI/Volumization/") != std::string::npos) relevance = "volumization_ref";
+
+            ptrs << run << ","
+                 << delay_seconds << ","
+                 << "\"" << mf.name << "\","
+                 << "\"" << mf.path << "\","
+                 << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(mf.obj) << std::dec << "\","
+                 << off << ","
+                 << "\"0x" << std::hex << p << std::dec << "\","
+                 << "\"" << poi.name << "\","
+                 << "\"" << poi.path << "\","
+                 << "\"" << poi.cls << "\","
+                 << "\"" << relevance << "\"\n";
+
+            ptr_rows++;
+        }
+
+        for (size_t off = 0; off <= 0x1000; off += 4)
+        {
+            int32_t v = phase9f_i32(base, off);
+
+            bool interesting = false;
+            std::string interpretation = "small_int";
+
+            if (v == 0 || v == 1 || v == 2 || v == 3 || v == 4 || v == 5 || v == 6 || v == 8 || v == 16 || v == 32 || v == 52)
+            {
+                interesting = true;
+                interpretation = "small_count_or_enum";
+            }
+
+            if (v == 128 || v == 256 || v == 512 || v == 1024 || v == 2048)
+            {
+                interesting = true;
+                interpretation = "possible_dimension";
+            }
+
+            if (!interesting) continue;
+
+            ints << run << ","
+                 << delay_seconds << ","
+                 << "\"" << mf.name << "\","
+                 << "\"" << mf.path << "\","
+                 << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(mf.obj) << std::dec << "\","
+                 << off << ","
+                 << v << ","
+                 << "\"" << interpretation << "\"\n";
+
+            int_rows++;
+        }
+
+        for (const auto& cand : interesting_objects)
+        {
+            if (name_rows > 800) break;
+
+            bool likely_related = false;
+
+            if (cand.path.find("/R5TerrainGeneratorAPI/Volumization/") != std::string::npos) likely_related = true;
+            if (cand.name.find("Landscape") != std::string::npos && mf.name.find("Landscape") != std::string::npos) likely_related = true;
+            if (cand.name.find("Biome") != std::string::npos && mf.name.find("Biome") != std::string::npos) likely_related = true;
+            if (cand.name.find("SubBiome") != std::string::npos && mf.name.find("SubBiome") != std::string::npos) likely_related = true;
+            if (cand.name.find("Height") != std::string::npos && mf.name.find("Height") != std::string::npos) likely_related = true;
+
+            if (!likely_related) continue;
+
+            std::string reason = "name_related";
+            if (cand.cls.find("MaterialExpression") != std::string::npos) reason = "material_expression_name_candidate";
+            if (cand.cls.find("Texture") != std::string::npos) reason = "texture_name_candidate";
+            if (cand.path.find("/R5TerrainGeneratorAPI/Volumization/") != std::string::npos) reason = "same_volumization_folder";
+
+            names << run << ","
+                  << delay_seconds << ","
+                  << "\"" << mf.name << "\","
+                  << "\"" << mf.path << "\","
+                  << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(mf.obj) << std::dec << "\","
+                  << "\"" << cand.name << "\","
+                  << "\"" << cand.path << "\","
+                  << "\"" << cand.cls << "\","
+                  << "\"" << reason << "\"\n";
+
+            name_rows++;
+        }
+    }
+
+    notes << "\n===== PHASE 9F NOTES RUN " << run << " =====\n";
+    notes << "9F is discovery-only. It scans target MaterialFunction objects for UObject pointer refs and small int offsets.\n";
+    notes << "If direct parameter names are not visible as UObject refs, next step should inspect FField/FProperty linked lists on UFunction/UStruct or use Ghidra to inspect material expression serialized data.\n";
+
+    summary << "\n===== PHASE 9F RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "target_materialfunctions=" << target_mfs.size() << "\n";
+    summary << "interesting_objects=" << interesting_objects.size() << "\n";
+    summary << "object_pointer_ref_rows=" << ptr_rows << "\n";
+    summary << "small_int_rows=" << int_rows << "\n";
+    summary << "name_like_rows=" << name_rows << "\n";
+
+    if (target_mfs.size() >= 6 && ptr_rows > 0)
+        summary << "DECISION=materialfunction_memory_refs_dumped\n";
+    else if (target_mfs.size() >= 6)
+        summary << "DECISION=target_materialfunctions_found_no_pointer_refs\n";
+    else
+        summary << "DECISION=missing_target_materialfunctions\n";
+
+    file_log("Phase 9F done run=" + std::to_string(run) +
+             " target_mfs=" + std::to_string(target_mfs.size()) +
+             " ptr_rows=" + std::to_string(ptr_rows) +
+             " int_rows=" + std::to_string(int_rows) +
+             " name_rows=" + std::to_string(name_rows));
+}
+
+static void start_phase9f_materialfunction_fname_scan()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9F materialfunction fname scan started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+
+            write_phase9f_materialfunction_fname_scan_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9F materialfunction fname scan finished");
+    }).detach();
+}
+
+// END PHASE9F_MATERIALFUNCTION_FNAME_SCAN
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -10907,15 +11204,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.28.0");
+        ModVersion = STR("1.29.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.28.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.28.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.29.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.29.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -10931,7 +11228,8 @@ public:
         // disabled v1.26.0: start_phase9b_safe_readback_probe();
         // disabled v1.27.0: start_phase9c_array_bridge_probe();
         // disabled v1.28.0: start_phase9d_material_parameter_discovery();
-        start_phase9e_vol_material_param_probe();
+        // disabled v1.29.0: start_phase9e_vol_material_param_probe();
+        start_phase9f_materialfunction_fname_scan();
     }
 
     auto on_update() -> void override
