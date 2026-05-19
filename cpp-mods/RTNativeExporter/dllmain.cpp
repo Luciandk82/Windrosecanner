@@ -10509,6 +10509,318 @@ static void start_phase9d_material_parameter_discovery()
 
 
 
+
+
+// BEGIN PHASE9E_VOL_MATERIAL_PARAM_PROBE
+
+static bool phase9e_has_any(const std::string& text, const std::vector<std::string>& needles)
+{
+    for (const auto& n : needles)
+        if (text.find(n) != std::string::npos) return true;
+    return false;
+}
+
+static std::string phase9e_label(const std::string& path)
+{
+    if (path.find("RT_LandscapeHeights") != std::string::npos) return "RT_LandscapeHeights";
+    if (path.find("RT_LandscapeTable") != std::string::npos) return "RT_LandscapeTable";
+    if (path.find("RT_Biomes") != std::string::npos) return "RT_Biomes";
+    if (path.find("RT_SubBiomes") != std::string::npos) return "RT_SubBiomes";
+    if (path.find("RT_BiomeDistanceFields") != std::string::npos) return "RT_BiomeDistanceFields";
+    return "";
+}
+
+static void write_phase9e_vol_material_param_probe_snapshot(int run, int delay_seconds)
+{
+    auto out = out_dir();
+
+    std::ofstream summary(out / "phase9e_summary.txt", std::ios::app);
+    std::ofstream funcs(out / "phase9e_volumization_material_functions.csv", std::ios::app);
+    std::ofstream params(out / "phase9e_possible_parameter_names.csv", std::ios::app);
+    std::ofstream arrays(out / "phase9e_array_targets.csv", std::ios::app);
+    std::ofstream ufuncs(out / "phase9e_bridge_ufunctions.csv", std::ios::app);
+    std::ofstream notes(out / "phase9e_notes.txt", std::ios::app);
+
+    if (run == 1)
+    {
+        funcs << "run,delay_seconds,name,path,class,addr,reason\n";
+        params << "run,delay_seconds,source_name,source_path,source_class,candidate,kind,confidence\n";
+        arrays << "run,delay_seconds,label,name,path,class,addr\n";
+        ufuncs << "run,delay_seconds,label,found,name,path,class,addr\n";
+    }
+
+    struct ObjInfo
+    {
+        UObject* obj = nullptr;
+        std::string cls;
+        std::string name;
+        std::string path;
+    };
+
+    std::vector<ObjInfo> vol_funcs;
+    std::vector<ObjInfo> param_candidates;
+    std::vector<ObjInfo> arrays_found;
+    std::vector<ObjInfo> bridge_funcs;
+
+    std::vector<std::string> vol_needles = {
+        "/R5TerrainGeneratorAPI/Volumization",
+        "MF_SampleLandscapeHeight",
+        "MF_SampleBiome",
+        "MF_SampleBiomeWeight",
+        "MF_SampleSubBiome",
+        "MF_SampleSubBiomeIndex",
+        "MF_WorldToLandscapeNormalized",
+        "LandscapeHeight",
+        "LandscapeTable",
+        "BiomeDistanceFields",
+        "SubBiome",
+        "RT_Landscape",
+        "RT_Biome"
+    };
+
+    std::vector<std::string> param_needles = {
+        "LandscapeHeights",
+        "LandscapeHeight",
+        "LandscapeTable",
+        "Biomes",
+        "Biome",
+        "SubBiomes",
+        "SubBiome",
+        "BiomeDistanceFields",
+        "DistanceFields",
+        "Slice",
+        "SliceIndex",
+        "Layer",
+        "LayerIndex",
+        "Island",
+        "IslandIndex",
+        "TextureArray",
+        "WorldToLandscape",
+        "LandscapeNormalized",
+        "R5Terrain",
+        "Volumization"
+    };
+
+    std::vector<std::string> bridge_needles = {
+        "CreateDynamicMaterialInstance",
+        "SetTextureParameterValue",
+        "SetScalarParameterValue",
+        "CreateRenderTarget2D",
+        "DrawMaterialToRenderTarget",
+        "ReadRenderTargetRawUV",
+        "ReadRenderTargetRawPixel",
+        "GetTextureParameterValue",
+        "GetScalarParameterValue"
+    };
+
+    int scanned = 0;
+
+    RC::Unreal::UObjectGlobals::ForEachUObject(
+        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+        {
+            if (!o) return RC::LoopAction::Continue;
+
+            scanned++;
+
+            std::string cls = class_name(o);
+            std::string name = obj_name(o);
+            std::string path = obj_path(o);
+
+            if (cls.find("MaterialFunction") != std::string::npos && phase9e_has_any(path, vol_needles))
+            {
+                ObjInfo x{o, cls, name, path};
+                vol_funcs.push_back(x);
+            }
+
+            if (!phase9e_label(path).empty() && cls.find("TextureRenderTarget2DArray") != std::string::npos)
+            {
+                ObjInfo x{o, cls, name, path};
+                arrays_found.push_back(x);
+            }
+
+            if ((phase9e_has_any(name, param_needles) || phase9e_has_any(path, param_needles)) &&
+                (cls.find("Material") != std::string::npos ||
+                 cls.find("MaterialExpression") != std::string::npos ||
+                 cls.find("MaterialFunction") != std::string::npos ||
+                 cls.find("Texture") != std::string::npos ||
+                 cls.find("Function") != std::string::npos ||
+                 path.find("/R5TerrainGeneratorAPI/Volumization") != std::string::npos))
+            {
+                ObjInfo x{o, cls, name, path};
+                param_candidates.push_back(x);
+            }
+
+            if (cls.find("Function") != std::string::npos && phase9e_has_any(name, bridge_needles))
+            {
+                ObjInfo x{o, cls, name, path};
+                bridge_funcs.push_back(x);
+            }
+
+            return RC::LoopAction::Continue;
+        }
+    );
+
+    std::sort(vol_funcs.begin(), vol_funcs.end(), [](const ObjInfo& a, const ObjInfo& b){ return a.path < b.path; });
+    std::sort(param_candidates.begin(), param_candidates.end(), [](const ObjInfo& a, const ObjInfo& b){ return a.path < b.path; });
+    std::sort(arrays_found.begin(), arrays_found.end(), [](const ObjInfo& a, const ObjInfo& b){ return phase9e_label(a.path) < phase9e_label(b.path); });
+    std::sort(bridge_funcs.begin(), bridge_funcs.end(), [](const ObjInfo& a, const ObjInfo& b){ return a.path < b.path; });
+
+    int sample_height = 0;
+    int sample_biome = 0;
+    int sample_subbiome = 0;
+    int world_to_landscape = 0;
+    int params_logged = 0;
+
+    for (const auto& f : vol_funcs)
+    {
+        std::string reason = "volumization_material_function";
+        if (f.name.find("SampleLandscapeHeight") != std::string::npos) { reason = "height_sampler"; sample_height++; }
+        if (f.name.find("SampleBiome") != std::string::npos) { reason = "biome_sampler"; sample_biome++; }
+        if (f.name.find("SampleSubBiome") != std::string::npos) { reason = "subbiome_sampler"; sample_subbiome++; }
+        if (f.name.find("WorldToLandscapeNormalized") != std::string::npos) { reason = "world_to_landscape_normalized"; world_to_landscape++; }
+
+        funcs << run << "," << delay_seconds << ","
+              << "\"" << f.name << "\","
+              << "\"" << f.path << "\","
+              << "\"" << f.cls << "\","
+              << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(f.obj) << std::dec << "\","
+              << "\"" << reason << "\"\n";
+
+        params << run << "," << delay_seconds << ","
+               << "\"" << f.name << "\","
+               << "\"" << f.path << "\","
+               << "\"" << f.cls << "\","
+               << "\"" << f.name << "\","
+               << "\"material_function_name\","
+               << "\"high\"\n";
+
+        params_logged++;
+    }
+
+    for (const auto& c : param_candidates)
+    {
+        if (params_logged > 500) break;
+
+        std::string kind = "object_name_or_path";
+        std::string confidence = "medium";
+
+        if (c.name.find("RT_") != std::string::npos) { kind = "render_target_name"; confidence = "high"; }
+        if (c.name.find("MF_") != std::string::npos) { kind = "material_function_name"; confidence = "high"; }
+        if (c.cls.find("MaterialExpression") != std::string::npos) { kind = "material_expression"; confidence = "medium"; }
+        if (c.cls.find("Function") != std::string::npos) { kind = "ufunction"; confidence = "medium"; }
+
+        params << run << "," << delay_seconds << ","
+               << "\"" << c.name << "\","
+               << "\"" << c.path << "\","
+               << "\"" << c.cls << "\","
+               << "\"" << c.name << "\","
+               << "\"" << kind << "\","
+               << "\"" << confidence << "\"\n";
+
+        params_logged++;
+    }
+
+    for (const auto& a : arrays_found)
+    {
+        arrays << run << "," << delay_seconds << ","
+               << "\"" << phase9e_label(a.path) << "\","
+               << "\"" << a.name << "\","
+               << "\"" << a.path << "\","
+               << "\"" << a.cls << "\","
+               << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(a.obj) << std::dec << "\"\n";
+    }
+
+    auto wanted = [&](const std::string& label, const std::string& path_contains)
+    {
+        bool found = false;
+        ObjInfo best{};
+
+        for (const auto& f : bridge_funcs)
+        {
+            if (f.path.find(path_contains) != std::string::npos)
+            {
+                found = true;
+                best = f;
+                break;
+            }
+        }
+
+        ufuncs << run << "," << delay_seconds << ","
+               << "\"" << label << "\","
+               << (found ? "1" : "0") << ","
+               << "\"" << (found ? best.name : std::string("")) << "\","
+               << "\"" << (found ? best.path : std::string("")) << "\","
+               << "\"" << (found ? best.cls : std::string("")) << "\","
+               << "\"0x" << std::hex << reinterpret_cast<uintptr_t>(found ? best.obj : nullptr) << std::dec << "\"\n";
+    };
+
+    wanted("CreateDynamicMaterialInstance", "/Script/Engine.KismetMaterialLibrary:CreateDynamicMaterialInstance");
+    wanted("MID_SetTextureParameterValue", "/Script/Engine.MaterialInstanceDynamic:SetTextureParameterValue");
+    wanted("MID_SetScalarParameterValue", "/Script/Engine.MaterialInstanceDynamic:SetScalarParameterValue");
+    wanted("CreateRenderTarget2D", "/Script/Engine.KismetRenderingLibrary:CreateRenderTarget2D");
+    wanted("DrawMaterialToRenderTarget", "/Script/Engine.KismetRenderingLibrary:DrawMaterialToRenderTarget");
+    wanted("ReadRenderTargetRawUV", "/Script/Engine.KismetRenderingLibrary:ReadRenderTargetRawUV");
+
+    notes << "\n===== PHASE 9E NOTES RUN " << run << " =====\n";
+    notes << "9E is still discovery-only. No material instance is created and no array readback is attempted.\n";
+    notes << "Goal: narrow material chain to R5TerrainGeneratorAPI/Volumization functions and candidate parameter names.\n";
+    notes << "If parameter names remain hidden, next phase should dump FProperty/FField or scan MaterialFunction object memory for referenced FNames.\n";
+
+    summary << "\n===== PHASE 9E RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "scanned_objects=" << scanned << "\n";
+    summary << "volumization_material_functions=" << vol_funcs.size() << "\n";
+    summary << "sample_height_functions=" << sample_height << "\n";
+    summary << "sample_biome_functions=" << sample_biome << "\n";
+    summary << "sample_subbiome_functions=" << sample_subbiome << "\n";
+    summary << "world_to_landscape_functions=" << world_to_landscape << "\n";
+    summary << "array_targets=" << arrays_found.size() << "\n";
+    summary << "bridge_functions_seen=" << bridge_funcs.size() << "\n";
+    summary << "parameter_candidate_rows=" << params_logged << "\n";
+
+    if (vol_funcs.size() >= 5 && arrays_found.size() == 5)
+        summary << "DECISION=volumization_material_chain_confirmed_need_parameter_names\n";
+    else
+        summary << "DECISION=volumization_material_chain_incomplete\n";
+
+    file_log("Phase 9E done run=" + std::to_string(run) +
+             " vol_funcs=" + std::to_string(vol_funcs.size()) +
+             " arrays=" + std::to_string(arrays_found.size()) +
+             " params=" + std::to_string(params_logged));
+}
+
+static void start_phase9e_vol_material_param_probe()
+{
+    static bool started = false;
+    if (started) return;
+    started = true;
+
+    file_log("Phase 9E volumization material parameter probe started");
+
+    std::thread([]()
+    {
+        const int delays[] = {180, 360};
+        int previous = 0;
+
+        for (int i = 0; i < 2; ++i)
+        {
+            int target = delays[i];
+            int delta = target - previous;
+            previous = target;
+
+            if (delta > 0)
+                std::this_thread::sleep_for(std::chrono::seconds(delta));
+
+            write_phase9e_vol_material_param_probe_snapshot(i + 1, target);
+        }
+
+        file_log("Phase 9E volumization material parameter probe finished");
+    }).detach();
+}
+
+// END PHASE9E_VOL_MATERIAL_PARAM_PROBE
+
+
+
 static void scan_render_targets()
 {
     static int attempts = 0;
@@ -10595,15 +10907,15 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.27.0");
+        ModVersion = STR("1.28.0");
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.27.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.27.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.28.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.28.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -10618,7 +10930,8 @@ public:
         // disabled v1.25.0: start_phase9a_rt_array_probe();
         // disabled v1.26.0: start_phase9b_safe_readback_probe();
         // disabled v1.27.0: start_phase9c_array_bridge_probe();
-        start_phase9d_material_parameter_discovery();
+        // disabled v1.28.0: start_phase9d_material_parameter_discovery();
+        start_phase9e_vol_material_param_probe();
     }
 
     auto on_update() -> void override
