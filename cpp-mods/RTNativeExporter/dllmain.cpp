@@ -980,9 +980,12 @@ public:
     auto on_unreal_init() -> void override
     {
         Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.35.0 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.35.0 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J START CALL ABOUT TO EXECUTE\n"));
 
         start_phase9j_tg_datastructure_dump();
+
+        Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J START CALL EXECUTED\n"));
+        file_log("RTNativeExporter v1.35.0 on_unreal_init");
         file_log("PHASE 9J START CALL EXECUTED");
 
     }
