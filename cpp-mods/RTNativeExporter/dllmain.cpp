@@ -764,6 +764,10 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
     std::ofstream samples_csv(out / "phase9j_core_array_samples.csv", std::ios::app);
     std::ofstream notes(out / "phase9j_notes.txt", std::ios::app);
 
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J CSV FILES OPENED\n"));
+    heartbeat << "PHASE9J csv files opened run=" << run << "\n";
+    heartbeat.flush();
+
     if (run == 1)
     {
         candidates_csv << "run,delay_seconds,base,source,owner,score,width,height,height_base,height_count,island_df_base,island_df_count,biomedf_base,biomedf_count,biomeid_base,biomeid_count,subbiome_base,subbiome_count,biomeweights_owner,biomeweights_count\n";
@@ -779,6 +783,11 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
     struct ObjInfo { UObject* obj; std::string name; std::string path; std::string cls; };
     std::vector<ObjInfo> objects;
     int scanned = 0;
+
+
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J BEFORE FOREACH\n"));
+    heartbeat << "PHASE9J before foreach run=" << run << "\n";
+    heartbeat.flush();
 
     RC::Unreal::UObjectGlobals::ForEachUObject(
         [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
@@ -812,6 +821,11 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
     }
 
     Phase9JTGCandidate best;
+
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J AFTER FOREACH\n"));
+    heartbeat << "PHASE9J after foreach run=" << run << "\n";
+    heartbeat.flush();
+
     for (const auto& c : candidates)
     {
         candidates_csv << run << "," << delay_seconds << ",\"0x" << std::hex << c.base << std::dec << "\",\"" << c.source << "\",\"" << c.owner << "\"," << c.score << "," << c.width << "," << c.height
