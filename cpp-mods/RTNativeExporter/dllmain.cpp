@@ -753,8 +753,6 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
     heartbeat.flush();
 
     Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J HEARTBEAT WRITTEN\n"));
-    auto out = out_dir();
-
     std::ofstream summary(out / "phase9j_summary.txt", std::ios::app);
     std::ofstream candidates_csv(out / "phase9j_tg_candidates.csv", std::ios::app);
     std::ofstream fields_csv(out / "phase9j_tg_fields.csv", std::ios::app);
