@@ -941,13 +941,17 @@ static void start_phase9j_tg_datastructure_dump()
 {
     Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J START FUNCTION ENTERED\n"));
     static bool started = false;
-    if (started) return;
-    started = true;
-
-    file_log("PHASE 9J CLEANROOM BUILD active - TG datastructure dump started");
+    if (started)
+    {
+        Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J START SKIPPED - ALREADY STARTED\n"));
+        return;
+    }
 
     std::thread([]()
     {
+        Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J WORKER THREAD ENTERED\n"));
+        file_log("PHASE 9J CLEANROOM BUILD active - TG datastructure dump started");
+
         const int delays[] = {180, 360};
         int previous = 0;
         for (int i = 0; i < 2; ++i)
@@ -961,6 +965,9 @@ static void start_phase9j_tg_datastructure_dump()
         }
         file_log("PHASE 9J CLEANROOM BUILD finished");
     }).detach();
+
+    started = true;
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J WORKER THREAD DETACHED\n"));
 }
 
 // END PHASE9J_CLEANROOM_TG_DUMP
@@ -973,8 +980,6 @@ public:
     {
         ModName = STR("RTNativeExporter");
         ModVersion = STR("1.35.0");
-        start_phase9j_tg_datastructure_dump();
-
     }
 
     ~RTNativeExporter() override {}
