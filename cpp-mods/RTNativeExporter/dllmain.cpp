@@ -11981,7 +11981,7 @@ static void scan_render_targets()
                 // disabled v1.11.0: write_phase7g_long_sampling_campaign(o, attempts);
                 // disabled v1.12.0: write_phase8a_landscape_heightmap_extraction(o, attempts);
                 // disabled v1.13.0: write_phase8b_targeted_landscape_runtime_index(o, attempts);
-                write_phase8c_component_layout_and_tiny_raw_probes(o, attempts);
+                // disabled by clean Phase 9J rebuild: write_phase8c_component_layout_and_tiny_raw_probes(o, attempts);
             }
 
             return RC::LoopAction::Continue;
