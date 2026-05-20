@@ -11508,6 +11508,7 @@ static void write_phase9h_landscape_table_deep_array_dump_snapshot(int run, int 
 static void start_phase9h_landscape_table_deep_array_dump()
 {
     return; // disabled by Phase 9J clean fixed rebuild
+}
 #if 0
     return; // disabled by Phase 9J clean fixed rebuild
 #if 0
