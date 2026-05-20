@@ -743,6 +743,16 @@ static void phase9j_write_samples(std::ofstream& out, int run, int delay_seconds
 static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seconds)
 {
     Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J SNAPSHOT ENTERED\n"));
+
+    auto out = out_dir();
+
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J OUT_DIR RESOLVED\n"));
+
+    std::ofstream heartbeat(out / "phase9j_heartbeat.txt", std::ios::app);
+    heartbeat << "PHASE9J heartbeat run=" << run << " delay=" << delay_seconds << "\n";
+    heartbeat.flush();
+
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J HEARTBEAT WRITTEN\n"));
     auto out = out_dir();
 
     std::ofstream summary(out / "phase9j_summary.txt", std::ios::app);
