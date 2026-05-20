@@ -59,7 +59,7 @@ static void wme_start_worker()
     }
 
     Output::send<LogLevel::Verbose>(STR("[WME] worker starting\n"));
-    wme_log("WindroseMapExtractor v1.0 worker starting");
+    wme_log("WindroseMapExtractor v1.1 worker starting");
 
     std::thread([]()
     {
@@ -78,6 +78,45 @@ static void wme_start_worker()
             wme_write_heartbeat(ss.str());
         }
 
+        Output::send<LogLevel::Verbose>(STR("[WME] object count snapshot starting\n"));
+        wme_log("object count snapshot starting");
+
+        int scanned = 0;
+
+        RC::Unreal::UObjectGlobals::ForEachUObject(
+            [&](RC::Unreal::UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
+            {
+                if (!o) return RC::LoopAction::Continue;
+
+                scanned++;
+
+                if ((scanned % 25000) == 0)
+                {
+                    Output::send<LogLevel::Verbose>(STR("[WME] object count progress\n"));
+                }
+
+                if (scanned >= 300000)
+                {
+                    Output::send<LogLevel::Verbose>(STR("[WME] object count limit hit\n"));
+                    return RC::LoopAction::Break;
+                }
+
+                return RC::LoopAction::Continue;
+            }
+        );
+
+        {
+            auto path = wme_logs_dir() / "object_count.txt";
+            std::ofstream f(path, std::ios::app);
+            f << "scanned_objects=" << scanned << "\n";
+            f.flush();
+        }
+
+        std::ostringstream done;
+        done << "object count snapshot done scanned_objects=" << scanned;
+        wme_log(done.str());
+        Output::send<LogLevel::Verbose>(STR("[WME] object count snapshot done\n"));
+
         wme_log("worker finished");
         Output::send<LogLevel::Verbose>(STR("[WME] worker finished\n"));
     }).detach();
@@ -91,15 +130,15 @@ public:
     WindroseMapExtractor() : CppUserModBase()
     {
         ModName = STR("WindroseMapExtractor");
-        ModVersion = STR("1.0.0");
+        ModVersion = STR("1.1.0");
     }
 
     ~WindroseMapExtractor() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[WME] WindroseMapExtractor v1.0 on_unreal_init\n"));
-        wme_log("WindroseMapExtractor v1.0 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[WME] WindroseMapExtractor v1.1 on_unreal_init\n"));
+        wme_log("WindroseMapExtractor v1.1 on_unreal_init");
         wme_start_worker();
     }
 
