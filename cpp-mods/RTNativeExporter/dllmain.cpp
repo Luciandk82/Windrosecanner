@@ -794,6 +794,22 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
         {
             if (!o) return RC::LoopAction::Continue;
             scanned++;
+
+            if ((scanned % 25000) == 0)
+            {
+                Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J FOREACH PROGRESS\n"));
+                heartbeat << "PHASE9J foreach progress scanned=" << scanned << "\n";
+                heartbeat.flush();
+            }
+
+            if (scanned >= 150000)
+            {
+                Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J FOREACH LIMIT HIT\n"));
+                heartbeat << "PHASE9J foreach limit hit scanned=" << scanned << "\n";
+                heartbeat.flush();
+                return RC::LoopAction::Break;
+            }
+
             std::string name = obj_name(o);
             std::string path = obj_path(o);
             std::string cls = class_name(o);
