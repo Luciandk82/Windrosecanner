@@ -11507,6 +11507,8 @@ static void write_phase9h_landscape_table_deep_array_dump_snapshot(int run, int 
 
 static void start_phase9h_landscape_table_deep_array_dump()
 {
+    return; // disabled by Phase 9J clean fixed rebuild
+#if 0
     static bool started = false;
     if (started) return;
     started = true;
@@ -11534,7 +11536,13 @@ static void start_phase9h_landscape_table_deep_array_dump()
     }).detach();
 }
 
+#endif // disabled old phase by Phase 9J clean fixed rebuild
 // END PHASE9H_LANDSCAPE_TABLE_DEEP_ARRAY_DUMP
+
+
+
+
+
 
 
 
@@ -11575,13 +11583,6 @@ static float phase9j_f32(uint8_t* base, size_t off)
     return v;
 }
 
-static double phase9j_f64(uint8_t* base, size_t off)
-{
-    double v = 0.0;
-    std::memcpy(&v, base + off, sizeof(v));
-    return v;
-}
-
 static uintptr_t phase9j_ptr(uint8_t* base, size_t off)
 {
     uintptr_t v = 0;
@@ -11602,33 +11603,27 @@ static bool phase9j_probably_ptr(uintptr_t v)
 
 static bool phase9j_small_count(uint32_t v)
 {
-    return v > 0 && v < 20000000U;
+    return v > 0 && v < 2000000;
 }
 
-static bool phase9j_probably_subsystem(const std::string& name, const std::string& path, const std::string& cls)
-{
-    return name.find("VolumizationSubsystem") != std::string::npos ||
-           path.find("VolumizationSubsystem") != std::string::npos ||
-           cls.find("VolumizationSubsystem") != std::string::npos;
-}
-
-static bool phase9j_probably_terrain_related(const std::string& name, const std::string& path, const std::string& cls)
+static bool phase9j_name_hits_tg(const std::string& name, const std::string& path, const std::string& cls)
 {
     return name.find("Terrain") != std::string::npos || path.find("Terrain") != std::string::npos || cls.find("Terrain") != std::string::npos ||
+           name.find("Generator") != std::string::npos || path.find("Generator") != std::string::npos || cls.find("Generator") != std::string::npos ||
            name.find("Volumization") != std::string::npos || path.find("Volumization") != std::string::npos || cls.find("Volumization") != std::string::npos ||
-           name.find("Genlandia") != std::string::npos || path.find("Genlandia") != std::string::npos;
+           name.find("R5TG") != std::string::npos || path.find("R5TG") != std::string::npos || cls.find("R5TG") != std::string::npos;
 }
 
 static std::string phase9j_hex_bytes(uint8_t* p, size_t n)
 {
-    static const char* hx = "0123456789abcdef";
+    static const char* h = "0123456789abcdef";
     std::string out;
     out.reserve(n * 2);
     for (size_t i = 0; i < n; ++i)
     {
         unsigned char b = p[i];
-        out.push_back(hx[b >> 4]);
-        out.push_back(hx[b & 15]);
+        out.push_back(h[(b >> 4) & 0xf]);
+        out.push_back(h[b & 0xf]);
     }
     return out;
 }
@@ -11664,39 +11659,29 @@ static Phase9JTGCandidate phase9j_eval_tg_candidate(uintptr_t base_addr, const s
     if (!phase9j_probably_ptr(base_addr)) return c;
 
     uint8_t* base = reinterpret_cast<uint8_t*>(base_addr);
-
     c.width = phase9j_u32(base, 0x10);
     c.height = phase9j_u32(base, 0x14);
-
     c.height_base = phase9j_ptr(base, 0x118);
     c.height_count = phase9j_u32(base, 0x120);
-
     c.island_df_base = phase9j_ptr(base, 0x140);
     c.island_df_count = phase9j_u32(base, 0x148);
-
     c.biomedf_base = phase9j_ptr(base, 0x150);
     c.biomedf_count = phase9j_u32(base, 0x158);
-
     c.biomeid_base = phase9j_ptr(base, 0x160);
     c.biomeid_count = phase9j_u32(base, 0x168);
-
     c.subbiome_base = phase9j_ptr(base, 0x170);
     c.subbiome_count = phase9j_u32(base, 0x178);
-
     c.biomeweights_owner = phase9j_ptr(base, 0x180);
     c.biomeweights_count = phase9j_u32(base, 0x188);
 
-    if (c.width > 0 && c.width < 100000) c.score += 2;
-    if (c.height > 0 && c.height < 100000) c.score += 2;
+    if (c.width > 0 && c.width < 20000) c.score += 1;
+    if (c.height > 0 && c.height < 20000) c.score += 1;
     if (phase9j_probably_ptr(c.height_base) && phase9j_small_count(c.height_count)) c.score += 3;
-    if (phase9j_probably_ptr(c.island_df_base) && phase9j_small_count(c.island_df_count)) c.score += 4;
-    if (phase9j_probably_ptr(c.biomedf_base) && c.biomedf_count > 0 && c.biomedf_count < 4096) c.score += 5;
+    if (phase9j_probably_ptr(c.island_df_base) && phase9j_small_count(c.island_df_count)) c.score += 5;
+    if (phase9j_probably_ptr(c.biomedf_base) && c.biomedf_count > 0 && c.biomedf_count < 4096) c.score += 6;
     if (phase9j_probably_ptr(c.biomeid_base) && phase9j_small_count(c.biomeid_count)) c.score += 3;
     if (phase9j_probably_ptr(c.subbiome_base) && phase9j_small_count(c.subbiome_count)) c.score += 3;
-    if (phase9j_probably_ptr(c.biomeweights_owner) && c.biomeweights_count > 0 && c.biomeweights_count < 4096) c.score += 5;
-    if (c.height_count == c.biomeid_count && c.height_count == c.subbiome_count && c.height_count > 0) c.score += 4;
-    if (c.width > 0 && c.height > 0 && c.height_count == c.width * c.height) c.score += 6;
-
+    if (phase9j_probably_ptr(c.biomeweights_owner) && c.biomeweights_count > 0 && c.biomeweights_count < 4096) c.score += 6;
     return c;
 }
 
@@ -11705,30 +11690,21 @@ static void phase9j_write_samples(std::ofstream& out, int run, int delay_seconds
     if (!phase9j_probably_ptr(base) || count == 0 || elem_size == 0) return;
     uint32_t rows = count;
     if (rows > max_rows) rows = max_rows;
-
     for (uint32_t i = 0; i < rows; ++i)
     {
         uintptr_t addr = base + static_cast<uintptr_t>(i) * elem_size;
         uint8_t* p = reinterpret_cast<uint8_t*>(addr);
         uint32_t u32 = 0;
-        int32_t i32 = 0;
-        uint16_t u16 = 0;
         float f32 = 0.0f;
-        std::memcpy(&u16, p, sizeof(u16));
-        std::memcpy(&u32, p, sizeof(u32));
-        std::memcpy(&i32, p, sizeof(i32));
-        std::memcpy(&f32, p, sizeof(f32));
-        out << run << "," << delay_seconds << "," << label << "," << i << ","
-            << "\"0x" << std::hex << addr << std::dec << "\","
-            << u16 << "," << u32 << "," << i32 << "," << f32 << ","
-            << "\"" << phase9j_hex_bytes(p, elem_size > 32 ? 32 : elem_size) << "\"\n";
+        std::memcpy(&u32, p, elem_size >= 4 ? 4 : elem_size);
+        if (elem_size >= 4) std::memcpy(&f32, p, 4);
+        out << run << "," << delay_seconds << ",\"" << label << "\"," << i << ",\"0x" << std::hex << addr << std::dec << "\"," << u32 << "," << static_cast<int32_t>(u32) << "," << f32 << ",\"" << phase9j_hex_bytes(p, elem_size > 32 ? 32 : elem_size) << "\"\n";
     }
 }
 
 static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seconds)
 {
     auto out = out_dir();
-
     std::ofstream summary(out / "phase9j_summary.txt", std::ios::app);
     std::ofstream candidates_csv(out / "phase9j_tg_candidates.csv", std::ios::app);
     std::ofstream fields_csv(out / "phase9j_tg_fields.csv", std::ios::app);
@@ -11743,116 +11719,87 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
     if (run == 1)
     {
         candidates_csv << "run,delay_seconds,source,owner,base,score,width,height,height_base,height_count,island_df_base,island_df_count,biomedf_base,biomedf_count,biomeid_base,biomeid_count,subbiome_base,subbiome_count,biomeweights_owner,biomeweights_count\n";
-        fields_csv << "run,delay_seconds,best_base,offset,name,raw_hex,u32,i32,f32,ptr\n";
-        island_csv << "run,delay_seconds,best_base,index,value_u16\n";
-        biomedf_csv << "run,delay_seconds,best_base,index,record_addr,x_i32,y_i32,w_u16,h_u16,payload_ptr,payload_count,record_hex\n";
-        biomedf_payload_csv << "run,delay_seconds,best_base,record_index,payload_index,value_u16\n";
-        weights_csv << "run,delay_seconds,best_base,index,record_addr,payload_ptr,payload_count,record_hex\n";
-        weights_payload_csv << "run,delay_seconds,best_base,record_index,payload_index,value_i32\n";
-        samples_csv << "run,delay_seconds,label,index,addr,u16,u32,i32,f32,hex_prefix\n";
+        fields_csv << "run,delay_seconds,best_base,offset,name,raw_hex,u32,i32,f32\n";
+        island_csv << "run,delay_seconds,best_base,index,value\n";
+        biomedf_csv << "run,delay_seconds,best_base,index,record_addr,x,y,w,h,payload,payload_count,raw_hex\n";
+        biomedf_payload_csv << "run,delay_seconds,best_base,record_index,payload_index,value\n";
+        weights_csv << "run,delay_seconds,best_base,index,record_addr,payload,payload_count,raw_hex\n";
+        weights_payload_csv << "run,delay_seconds,best_base,record_index,payload_index,value\n";
+        samples_csv << "run,delay_seconds,label,index,addr,u32,i32,f32,raw_hex\n";
     }
+
+    file_log("Phase 9J snapshot begin run=" + std::to_string(run));
 
     struct ObjInfo { UObject* obj; std::string cls; std::string name; std::string path; };
-    std::vector<ObjInfo> objects;
+    std::vector<ObjInfo> objs;
     std::vector<Phase9JTGCandidate> candidates;
-
     int scanned = 0;
 
-    RC::Unreal::UObjectGlobals::ForEachUObject(
-        [&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
-        {
-            if (!o) return RC::LoopAction::Continue;
-            scanned++;
-            std::string cls = class_name(o);
-            std::string name = obj_name(o);
-            std::string path = obj_path(o);
-            if (phase9j_probably_terrain_related(name, path, cls))
-            {
-                objects.push_back({o, cls, name, path});
-            }
-            return RC::LoopAction::Continue;
-        }
-    );
-
-    for (const auto& obj : objects)
+    RC::Unreal::UObjectGlobals::ForEachUObject([&](UObject* o, [[maybe_unused]] int32_t chunk_index, [[maybe_unused]] int32_t object_index)
     {
-        uintptr_t obj_addr = reinterpret_cast<uintptr_t>(obj.obj);
+        if (!o) return RC::LoopAction::Continue;
+        scanned++;
+        std::string cls = class_name(o);
+        std::string name = obj_name(o);
+        std::string path = obj_path(o);
+        if (phase9j_name_hits_tg(name, path, cls))
+            objs.push_back({o, cls, name, path});
+        return RC::LoopAction::Continue;
+    });
+
+    for (const auto& obj : objs)
+    {
         std::string owner = obj.cls + "|" + obj.name + "|" + obj.path;
-
+        uintptr_t obj_addr = reinterpret_cast<uintptr_t>(obj.obj);
         candidates.push_back(phase9j_eval_tg_candidate(obj_addr, "object_base", owner));
-
-        if (phase9j_probably_subsystem(obj.name, obj.path, obj.cls))
+        uint8_t* b = reinterpret_cast<uint8_t*>(obj.obj);
+        for (size_t off = 0x80; off <= 0x3c0; off += 8)
         {
-            uint8_t* b = reinterpret_cast<uint8_t*>(obj.obj);
-            for (size_t off = 0x40; off <= 0x500; off += 8)
-            {
-                uintptr_t ptr = phase9j_ptr(b, off);
-                if (!phase9j_probably_ptr(ptr)) continue;
-                candidates.push_back(phase9j_eval_tg_candidate(ptr, "subsystem_ptr_0x" + std::to_string((unsigned long long)off), owner));
-            }
+            uintptr_t ptr = phase9j_ptr(b, off);
+            if (!phase9j_probably_ptr(ptr)) continue;
+            candidates.push_back(phase9j_eval_tg_candidate(ptr, "object_ptr_0x" + std::to_string((unsigned long long)off), owner));
         }
     }
 
-    int valid = 0;
     Phase9JTGCandidate best;
+    for (const auto& c : candidates)
+        if (c.score > best.score) best = c;
 
     for (const auto& c : candidates)
     {
-        if (c.score > best.score) best = c;
-        if (c.score >= 12) valid++;
-        candidates_csv << run << "," << delay_seconds << ","
-                       << "\"" << c.source << "\","
-                       << "\"" << c.owner << "\","
-                       << "\"0x" << std::hex << c.base << std::dec << "\","
-                       << c.score << "," << c.width << "," << c.height << ","
-                       << "\"0x" << std::hex << c.height_base << std::dec << "\"," << c.height_count << ","
-                       << "\"0x" << std::hex << c.island_df_base << std::dec << "\"," << c.island_df_count << ","
-                       << "\"0x" << std::hex << c.biomedf_base << std::dec << "\"," << c.biomedf_count << ","
-                       << "\"0x" << std::hex << c.biomeid_base << std::dec << "\"," << c.biomeid_count << ","
-                       << "\"0x" << std::hex << c.subbiome_base << std::dec << "\"," << c.subbiome_count << ","
-                       << "\"0x" << std::hex << c.biomeweights_owner << std::dec << "\"," << c.biomeweights_count << "\n";
+        if (c.score < 6) continue;
+        candidates_csv << run << "," << delay_seconds << ",\"" << c.source << "\",\"" << c.owner << "\",\"0x" << std::hex << c.base << std::dec << "\"," << c.score << "," << c.width << "," << c.height << ",\"0x" << std::hex << c.height_base << "\"," << std::dec << c.height_count << ",\"0x" << std::hex << c.island_df_base << "\"," << std::dec << c.island_df_count << ",\"0x" << std::hex << c.biomedf_base << "\"," << std::dec << c.biomedf_count << ",\"0x" << std::hex << c.biomeid_base << "\"," << std::dec << c.biomeid_count << ",\"0x" << std::hex << c.subbiome_base << "\"," << std::dec << c.subbiome_count << ",\"0x" << std::hex << c.biomeweights_owner << "\"," << std::dec << c.biomeweights_count << "\n";
     }
+
+    uint32_t island_rows = 0, biomedf_rows = 0, biomedf_payload_rows = 0, weight_rows = 0, weight_payload_rows = 0;
 
     if (best.score > 0)
     {
         uint8_t* b = reinterpret_cast<uint8_t*>(best.base);
-        struct F { size_t off; const char* name; };
-        F flds[] = {
-            {0x10,"width"},{0x14,"height"},{0x118,"Height_base"},{0x120,"Height_count"},{0x128,"HeightMinMax_0"},{0x130,"HeightMinMax_1"},{0x134,"HeightMinMax_2"},
-            {0x140,"IslandDFMap_base"},{0x148,"IslandDFMap_count"},{0x150,"BiomeDFMap_base"},{0x158,"BiomeDFMap_count"},
-            {0x160,"BiomeID_base"},{0x168,"BiomeID_count"},{0x170,"SubBiomeID_base"},{0x178,"SubBiomeID_count"},
-            {0x180,"BiomeWeights_owner"},{0x188,"BiomeWeights_count"},{0x290,"PackedHeightmapA_width"},{0x294,"PackedHeightmapA_height"},{0x298,"PackedHeightmapA_base"},
-            {0x330,"PackedHeightmapB_width"},{0x334,"PackedHeightmapB_height"},{0x338,"PackedHeightmapB_base"}
+        struct F { size_t off; const char* name; } fields[] = {
+            {0x10,"width"},{0x14,"height"},{0x118,"Height_base"},{0x120,"Height_count"},{0x140,"IslandDFMap_base"},{0x148,"IslandDFMap_count"},{0x150,"BiomeDFMap_base"},{0x158,"BiomeDFMap_count"},{0x160,"BiomeID_base"},{0x168,"BiomeID_count"},{0x170,"SubBiomeID_base"},{0x178,"SubBiomeID_count"},{0x180,"BiomeWeights_owner"},{0x188,"BiomeWeights_count"},{0x290,"PackedHeightmapA_base"},{0x2a0,"PackedHeightmapA_count"},{0x330,"PackedHeightmapB_base"},{0x340,"PackedHeightmapB_count"}
         };
-        for (const auto& f : flds)
+        for (const auto& f : fields)
         {
-            uintptr_t p = phase9j_ptr(b, f.off);
-            fields_csv << run << "," << delay_seconds << ","
-                       << "\"0x" << std::hex << best.base << std::dec << "\","
-                       << "\"0x" << std::hex << f.off << std::dec << "\","
-                       << f.name << ","
-                       << "\"0x" << std::hex << p << std::dec << "\","
-                       << phase9j_u32(b, f.off) << "," << phase9j_i32(b, f.off) << "," << phase9j_f32(b, f.off) << ","
-                       << "\"0x" << std::hex << p << std::dec << "\"\n";
+            uintptr_t raw = phase9j_ptr(b, f.off);
+            fields_csv << run << "," << delay_seconds << ",\"0x" << std::hex << best.base << std::dec << "\",\"0x" << std::hex << f.off << std::dec << "\",\"" << f.name << "\",\"0x" << std::hex << raw << std::dec << "\"," << phase9j_u32(b, f.off) << "," << phase9j_i32(b, f.off) << "," << phase9j_f32(b, f.off) << "\n";
         }
 
         if (phase9j_probably_ptr(best.island_df_base) && best.island_df_count > 0)
         {
-            uint32_t n = best.island_df_count;
-            if (n > 4096) n = 4096;
+            uint32_t n = best.island_df_count > 200000 ? 200000 : best.island_df_count;
             for (uint32_t i = 0; i < n; ++i)
             {
                 uint16_t v = 0;
-                std::memcpy(&v, reinterpret_cast<void*>(best.island_df_base + static_cast<uintptr_t>(i) * 2ULL), sizeof(v));
+                std::memcpy(&v, reinterpret_cast<void*>(best.island_df_base + static_cast<uintptr_t>(i) * 2ULL), 2);
                 island_csv << run << "," << delay_seconds << ",\"0x" << std::hex << best.base << std::dec << "\"," << i << "," << v << "\n";
+                island_rows++;
             }
         }
 
-        if (phase9j_probably_ptr(best.biomedf_base) && best.biomedf_count > 0)
+        if (phase9j_probably_ptr(best.biomedf_base) && best.biomedf_count > 0 && best.biomedf_count < 4096)
         {
-            uint32_t recs = best.biomedf_count;
-            if (recs > 256) recs = 256;
-            for (uint32_t i = 0; i < recs; ++i)
+            for (uint32_t i = 0; i < best.biomedf_count; ++i)
             {
                 uintptr_t rec = best.biomedf_base + static_cast<uintptr_t>(i) * 0x20ULL;
                 uint8_t* rb = reinterpret_cast<uint8_t*>(rec);
@@ -11863,40 +11810,40 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
                 uintptr_t payload = phase9j_ptr(rb, 0x10);
                 uint32_t payload_count = phase9j_u32(rb, 0x18);
                 biomedf_csv << run << "," << delay_seconds << ",\"0x" << std::hex << best.base << std::dec << "\"," << i << ",\"0x" << std::hex << rec << std::dec << "\"," << x << "," << y << "," << w << "," << h << ",\"0x" << std::hex << payload << std::dec << "\"," << payload_count << ",\"" << phase9j_hex_bytes(rb, 0x20) << "\"\n";
+                biomedf_rows++;
                 if (phase9j_probably_ptr(payload) && payload_count > 0 && payload_count < 2000000)
                 {
-                    uint32_t pn = payload_count;
-                    if (pn > 512) pn = 512;
-                    for (uint32_t j = 0; j < pn; ++j)
+                    uint32_t m = payload_count > 4096 ? 4096 : payload_count;
+                    for (uint32_t j = 0; j < m; ++j)
                     {
                         uint16_t v = 0;
-                        std::memcpy(&v, reinterpret_cast<void*>(payload + static_cast<uintptr_t>(j) * 2ULL), sizeof(v));
+                        std::memcpy(&v, reinterpret_cast<void*>(payload + static_cast<uintptr_t>(j) * 2ULL), 2);
                         biomedf_payload_csv << run << "," << delay_seconds << ",\"0x" << std::hex << best.base << std::dec << "\"," << i << "," << j << "," << v << "\n";
+                        biomedf_payload_rows++;
                     }
                 }
             }
         }
 
-        if (phase9j_probably_ptr(best.biomeweights_owner) && best.biomeweights_count > 0)
+        if (phase9j_probably_ptr(best.biomeweights_owner) && best.biomeweights_count > 0 && best.biomeweights_count < 4096)
         {
-            uint32_t recs = best.biomeweights_count;
-            if (recs > 256) recs = 256;
-            for (uint32_t i = 0; i < recs; ++i)
+            for (uint32_t i = 0; i < best.biomeweights_count; ++i)
             {
                 uintptr_t rec = best.biomeweights_owner + static_cast<uintptr_t>(i) * 0xf8ULL;
                 uint8_t* rb = reinterpret_cast<uint8_t*>(rec);
                 uintptr_t payload = phase9j_ptr(rb, 0xe8);
                 uint32_t payload_count = phase9j_u32(rb, 0xf0);
                 weights_csv << run << "," << delay_seconds << ",\"0x" << std::hex << best.base << std::dec << "\"," << i << ",\"0x" << std::hex << rec << std::dec << "\",\"0x" << std::hex << payload << std::dec << "\"," << payload_count << ",\"" << phase9j_hex_bytes(rb, 0xf8) << "\"\n";
+                weight_rows++;
                 if (phase9j_probably_ptr(payload) && payload_count > 0 && payload_count < 2000000)
                 {
-                    uint32_t pn = payload_count;
-                    if (pn > 512) pn = 512;
-                    for (uint32_t j = 0; j < pn; ++j)
+                    uint32_t m = payload_count > 4096 ? 4096 : payload_count;
+                    for (uint32_t j = 0; j < m; ++j)
                     {
                         int32_t v = 0;
-                        std::memcpy(&v, reinterpret_cast<void*>(payload + static_cast<uintptr_t>(j) * 4ULL), sizeof(v));
+                        std::memcpy(&v, reinterpret_cast<void*>(payload + static_cast<uintptr_t>(j) * 4ULL), 4);
                         weights_payload_csv << run << "," << delay_seconds << ",\"0x" << std::hex << best.base << std::dec << "\"," << i << "," << j << "," << v << "\n";
+                        weight_payload_rows++;
                     }
                 }
             }
@@ -11909,39 +11856,27 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
         phase9j_write_samples(samples_csv, run, delay_seconds, "PackedHeightmapB_u16", phase9j_ptr(b, 0x338), phase9j_u32(b, 0x340), 2, 1024);
     }
 
-    notes << "\n===== PHASE 9J NOTES RUN " << run << " =====\n";
-    notes << "9J targets Ghidra-confirmed FTerrainGenerator/TG buffers, especially TG.IslandDFMap, TG.BiomeDFMap[%d], and TG.BiomeWeights[%d].\n";
-    notes << "Confirmed by Ghidra: IslandDFMap base/count at 0x140/0x148, BiomeDFMap base/count at 0x150/0x158 stride 0x20, BiomeWeights owner/count at 0x180/0x188 stride 0xF8.\n";
-    notes << "This phase scans terrain-related UObjects and pointers from VolumizationSubsystem to locate the live TG struct, then dumps selected buffers.\n";
-    notes << "This phase is read-only. No ProcessEvent, no GPU readback, no texture modification.\n";
+    notes << "\n===== PHASE 9J CLEAN FIXED NOTES RUN " << run << " =====\n";
+    notes << "Clean fixed build. Old Phase 7/9G/9H/9I start calls are disabled before Phase 9J starts.\n";
+    notes << "Targets from Ghidra manifest: IslandDFMap 0x140/0x148, BiomeDFMap 0x150/0x158 stride 0x20, BiomeWeights 0x180/0x188 stride 0xF8.\n";
+    notes << "Read-only. No ProcessEvent, no GPU readback, no texture modification.\n";
 
-    summary << "\n===== PHASE 9J RUN " << run << " DELAY " << delay_seconds << "s =====\n";
+    summary << "\n===== PHASE 9J CLEAN FIXED RUN " << run << " DELAY " << delay_seconds << "s =====\n";
     summary << "scanned_objects=" << scanned << "\n";
-    summary << "terrain_related_objects=" << objects.size() << "\n";
-    summary << "tg_candidates=" << candidates.size() << "\n";
-    summary << "valid_like_tg_candidates=" << valid << "\n";
+    summary << "terrain_related_objects=" << objs.size() << "\n";
+    summary << "candidate_count=" << candidates.size() << "\n";
     summary << "best_score=" << best.score << "\n";
     summary << "best_base=0x" << std::hex << best.base << std::dec << "\n";
-    summary << "best_source=" << best.source << "\n";
     summary << "best_owner=" << best.owner << "\n";
-    summary << "width=" << best.width << "\n";
-    summary << "height=" << best.height << "\n";
-    summary << "height_count=" << best.height_count << "\n";
-    summary << "island_df_count=" << best.island_df_count << "\n";
-    summary << "biomedf_count=" << best.biomedf_count << "\n";
-    summary << "biomeid_count=" << best.biomeid_count << "\n";
-    summary << "subbiome_count=" << best.subbiome_count << "\n";
-    summary << "biomeweights_count=" << best.biomeweights_count << "\n";
-    if (best.score >= 18)
-        summary << "DECISION=tg_buffers_dumped\n";
-    else if (best.score > 0)
-        summary << "DECISION=tg_candidates_dumped_but_uncertain\n";
-    else
-        summary << "DECISION=no_tg_candidate_found\n";
+    summary << "island_rows=" << island_rows << "\n";
+    summary << "biomedf_rows=" << biomedf_rows << "\n";
+    summary << "biomedf_payload_rows=" << biomedf_payload_rows << "\n";
+    summary << "biomeweight_rows=" << weight_rows << "\n";
+    summary << "biomeweight_payload_rows=" << weight_payload_rows << "\n";
+    if (best.score >= 10) summary << "DECISION=tg_datastructure_dumped\n";
+    else summary << "DECISION=no_good_tg_candidate\n";
 
-    file_log("Phase 9J done run=" + std::to_string(run) +
-             " tg_candidates=" + std::to_string(candidates.size()) +
-             " best_score=" + std::to_string(best.score));
+    file_log("Phase 9J done run=" + std::to_string(run) + " best_score=" + std::to_string(best.score) + " island_rows=" + std::to_string(island_rows) + " biomedf_rows=" + std::to_string(biomedf_rows) + " weight_rows=" + std::to_string(weight_rows));
 }
 
 static void start_phase9j_tg_datastructure_dump()
@@ -11949,26 +11884,19 @@ static void start_phase9j_tg_datastructure_dump()
     static bool started = false;
     if (started) return;
     started = true;
-
-    file_log("Phase 9J TG datastructure dump started");
-
+    file_log("PHASE 9J CLEAN FIXED BUILD active - TG datastructure dump started");
     std::thread([]()
     {
         const int delays[] = {180, 360};
         int previous = 0;
-
         for (int i = 0; i < 2; ++i)
         {
             int target = delays[i];
             int delta = target - previous;
             previous = target;
-
-            if (delta > 0)
-                std::this_thread::sleep_for(std::chrono::seconds(delta));
-
+            if (delta > 0) std::this_thread::sleep_for(std::chrono::seconds(delta));
             write_phase9j_tg_datastructure_dump_snapshot(i + 1, target);
         }
-
         file_log("Phase 9J TG datastructure dump finished");
     }).detach();
 }
@@ -12032,9 +11960,9 @@ static void scan_render_targets()
 
             found++;
 
-            write_phase7a_ue_runtime_readback_discovery(o);
-            write_phase7b_ufunction_signature_dump(o);
-            write_phase7c1_context_object_discovery(o);
+            /* disabled by Phase 9J clean fixed rebuild */
+            /* disabled by Phase 9J clean fixed rebuild */
+            /* disabled by Phase 9J clean fixed rebuild */
             // Phase 7D disabled in v1.9.9. Phase 7E supersedes it.
             // write_phase7d_export_render_target_attempt(o);
 
@@ -12063,15 +11991,16 @@ public:
     RTNativeExporter() : CppUserModBase()
     {
         ModName = STR("RTNativeExporter");
-        ModVersion = STR("1.33.0");
+        ModVersion = STR("1.34.0");
+        start_phase9j_tg_datastructure_dump();
     }
 
     ~RTNativeExporter() override {}
 
     auto on_unreal_init() -> void override
     {
-        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.33.0.2.2 on_unreal_init\n"));
-        file_log("RTNativeExporter v1.33.0.2.2 on_unreal_init");
+        Output::send<LogLevel::Verbose>(STR("[RTN] RTNativeExporter v1.34.0.2.2 on_unreal_init\n"));
+        file_log("RTNativeExporter v1.34.0.2.2 on_unreal_init");
         // disabled v1.15.0: start_phase8d_independent_landscape_watchdog();
         // disabled v1.16.0: start_phase8e_timed_layout_memory_probes();
         // disabled v1.17.0: start_phase8f_offset_value_matrix();
@@ -12089,10 +12018,10 @@ public:
         // disabled v1.28.0: start_phase9d_material_parameter_discovery();
         // disabled v1.29.0: start_phase9e_vol_material_param_probe();
         // disabled v1.30.0: start_phase9f_materialfunction_fname_scan();
-        // disabled v1.31.0: // disabled v1.32.0: start_phase9g_landscape_table_runtime_dump();
-        // disabled v1.33.0: start_phase9i_range_record_hunt();
-        start_phase9j_tg_datastructure_dump();
-        start_phase9h_landscape_table_deep_array_dump();
+        // disabled v1.31.0: // disabled v1.32.0: /* disabled by Phase 9J clean fixed rebuild */
+        // disabled v1.33.0: /* disabled by Phase 9J clean fixed rebuild */
+        /* disabled by Phase 9J clean fixed rebuild */
+        /* disabled by Phase 9J clean fixed rebuild */
     }
 
     auto on_update() -> void override
