@@ -11539,6 +11539,7 @@ static void start_phase9h_landscape_table_deep_array_dump()
 }
 
 #endif // disabled old phase by Phase 9J clean fixed rebuild
+#endif // nested disabled old phase
 // END PHASE9H_LANDSCAPE_TABLE_DEEP_ARRAY_DUMP
 
 
