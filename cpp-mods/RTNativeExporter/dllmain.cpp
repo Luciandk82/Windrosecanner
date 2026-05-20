@@ -742,6 +742,7 @@ static void phase9j_write_samples(std::ofstream& out, int run, int delay_seconds
 
 static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seconds)
 {
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J SNAPSHOT ENTERED\n"));
     auto out = out_dir();
 
     std::ofstream summary(out / "phase9j_summary.txt", std::ios::app);
@@ -938,6 +939,7 @@ static void write_phase9j_tg_datastructure_dump_snapshot(int run, int delay_seco
 
 static void start_phase9j_tg_datastructure_dump()
 {
+    Output::send<LogLevel::Verbose>(STR("[RTN] PHASE 9J START FUNCTION ENTERED\n"));
     static bool started = false;
     if (started) return;
     started = true;
