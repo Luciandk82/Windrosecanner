@@ -11509,6 +11509,8 @@ static void start_phase9h_landscape_table_deep_array_dump()
 {
     return; // disabled by Phase 9J clean fixed rebuild
 #if 0
+    return; // disabled by Phase 9J clean fixed rebuild
+#if 0
     static bool started = false;
     if (started) return;
     started = true;
@@ -11538,6 +11540,11 @@ static void start_phase9h_landscape_table_deep_array_dump()
 
 #endif // disabled old phase by Phase 9J clean fixed rebuild
 // END PHASE9H_LANDSCAPE_TABLE_DEEP_ARRAY_DUMP
+
+
+
+
+
 
 
 
@@ -11993,6 +12000,7 @@ public:
         ModName = STR("RTNativeExporter");
         ModVersion = STR("1.34.0");
         start_phase9j_tg_datastructure_dump();
+        /* disabled by Phase 9J clean fixed rebuild */
     }
 
     ~RTNativeExporter() override {}
