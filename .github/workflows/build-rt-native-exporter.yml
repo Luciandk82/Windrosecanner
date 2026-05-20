@@ -41,8 +41,20 @@ jobs:
           cd cpp-mods
           cmake --build build --config Game__Shipping__Win64 --target RTNativeExporter --verbose
 
-      - name: Upload DLL
+      - name: Build WindroseMapExtractor
+        shell: pwsh
+        run: |
+          cd cpp-mods
+          cmake --build build --config Game__Shipping__Win64 --target WindroseMapExtractor --verbose
+
+      - name: Upload RTNativeExporter DLL
         uses: actions/upload-artifact@v4
         with:
           name: RTNativeExporter
           path: cpp-mods/build/RTNativeExporter/Game__Shipping__Win64/RTNativeExporter.dll
+
+      - name: Upload WindroseMapExtractor DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: WindroseMapExtractor
+          path: cpp-mods/build/WindroseMapExtractor/Game__Shipping__Win64/WindroseMapExtractor.dll
